@@ -32,6 +32,7 @@ impl Default for Project {
             kind: LayerKind::DeviceFrame(DeviceFrameLayer {
                 style: FrameColor::SpaceGray,
                 custom_image_path: None,
+                kind: FrameKind::Phone,
             }),
             transform: Transform {
                 x: CANVAS_WIDTH as f32 * 0.5 - 560.0,
@@ -262,4 +263,18 @@ pub struct DeviceFrameLayer {
     /// drawn instead of the built-in procedural silhouette.
     #[serde(default)]
     pub custom_image_path: Option<String>,
+    /// Controls the screen-inset proportions used for a linked screen photo
+    /// (a laptop has a much taller "chin" below the screen than a phone).
+    #[serde(default)]
+    pub kind: FrameKind,
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum FrameKind {
+    #[default]
+    Phone,
+    Laptop,
+    Android,
+    AndroidWaterdrop,
+    Ipad,
 }

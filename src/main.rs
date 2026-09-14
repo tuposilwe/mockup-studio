@@ -36,7 +36,7 @@ fn main() -> eframe::Result<()> {
 
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([1280.0, 860.0])
+            .with_inner_size([1600.0, 1000.0])
             .with_title("Mockup Studio"),
         ..Default::default()
     };

@@ -16,6 +16,10 @@ pub fn template_gallery() -> Vec<TemplateDef> {
         TemplateDef { name: "Panorama Duo", build: panorama_duo },
         TemplateDef { name: "Feature Badge", build: feature_badge },
         TemplateDef { name: "Clean Mono", build: clean_mono },
+        TemplateDef { name: "MacBook Showcase", build: macbook_showcase },
+        TemplateDef { name: "Android Showcase", build: android_showcase },
+        TemplateDef { name: "Android Waterdrop", build: android_waterdrop_showcase },
+        TemplateDef { name: "iPad Showcase", build: ipad_showcase },
     ]
 }
 
@@ -27,6 +31,107 @@ fn base_frame(id: u64, x: f32, y: f32, w: f32, h: f32, style: FrameColor, photos
         kind: LayerKind::DeviceFrame(DeviceFrameLayer {
             style,
             custom_image_path: Some(photos.iphone_frame.clone()),
+            kind: FrameKind::Phone,
+        }),
+        transform: Transform {
+            x,
+            y,
+            width: w,
+            height: h,
+            rotation_deg: 0.0,
+            opacity: 100.0,
+            mirror_h: false,
+            mirror_v: false,
+            corner_radius: 0.0,
+            shadow: ShadowStyle::default(),
+        },
+    }
+}
+
+fn base_laptop_frame(id: u64, x: f32, y: f32, w: f32, h: f32, photos: &BundledPhotos) -> Layer {
+    Layer {
+        id,
+        name: "MacBook Frame".to_string(),
+        visible: true,
+        kind: LayerKind::DeviceFrame(DeviceFrameLayer {
+            style: FrameColor::SpaceGray,
+            custom_image_path: Some(photos.macbook_frame.clone()),
+            kind: FrameKind::Laptop,
+        }),
+        transform: Transform {
+            x,
+            y,
+            width: w,
+            height: h,
+            rotation_deg: 0.0,
+            opacity: 100.0,
+            mirror_h: false,
+            mirror_v: false,
+            corner_radius: 0.0,
+            shadow: ShadowStyle::default(),
+        },
+    }
+}
+
+fn base_android_frame(id: u64, x: f32, y: f32, w: f32, h: f32, photos: &BundledPhotos) -> Layer {
+    Layer {
+        id,
+        name: "Android Frame".to_string(),
+        visible: true,
+        kind: LayerKind::DeviceFrame(DeviceFrameLayer {
+            style: FrameColor::SpaceGray,
+            custom_image_path: Some(photos.android_frame.clone()),
+            kind: FrameKind::Android,
+        }),
+        transform: Transform {
+            x,
+            y,
+            width: w,
+            height: h,
+            rotation_deg: 0.0,
+            opacity: 100.0,
+            mirror_h: false,
+            mirror_v: false,
+            corner_radius: 0.0,
+            shadow: ShadowStyle::default(),
+        },
+    }
+}
+
+fn base_android_waterdrop_frame(id: u64, x: f32, y: f32, w: f32, h: f32, photos: &BundledPhotos) -> Layer {
+    Layer {
+        id,
+        name: "Android Frame".to_string(),
+        visible: true,
+        kind: LayerKind::DeviceFrame(DeviceFrameLayer {
+            style: FrameColor::SpaceGray,
+            custom_image_path: Some(photos.android_waterdrop_frame.clone()),
+            kind: FrameKind::AndroidWaterdrop,
+        }),
+        transform: Transform {
+            x,
+            y,
+            width: w,
+            height: h,
+            rotation_deg: 0.0,
+            opacity: 100.0,
+            mirror_h: false,
+            mirror_v: false,
+            corner_radius: 0.0,
+            shadow: ShadowStyle::default(),
+        },
+    }
+}
+
+fn base_ipad_frame(id: u64, x: f32, y: f32, w: f32, h: f32, photos: &BundledPhotos) -> Layer {
+    Layer {
+        id,
+        name: "iPad Frame".to_string(),
+        visible: true,
+        kind: LayerKind::DeviceFrame(DeviceFrameLayer {
+            style: FrameColor::SpaceGray,
+            custom_image_path: Some(photos.ipad_frame.clone()),
+            kind: FrameKind::Ipad,
         }),
         transform: Transform {
             x,
@@ -101,35 +206,71 @@ pub fn aspect_crop(path: &str, target_w: f32, target_h: f32) -> Option<CropRect>
     }
 }
 
-/// Margins (as a fraction of the frame's own width/height) that keep a screen
-/// photo inside the frame's real screen area rather than stretched to the
-/// frame's full outer bounds. Measured directly from the bundled real iPhone
-/// frame PNG's alpha channel (screen rect at 121,118 to 1845,3843 in a
-/// 1965x3953 source image, scanned row/column by row/column, corner curves
-/// excluded), so the photo fits the actual screen edges precisely rather
-/// than leaving an oversized gap.
-pub const SCREEN_MARGIN_X_FRAC: f32 = 0.061;
-pub const SCREEN_MARGIN_Y_FRAC: f32 = 0.029;
+/// Screen-inset margins (as a fraction of the frame's own width/height,
+/// left/right/top/bottom independently since a laptop's screen sits far from
+/// centered — there's a tall keyboard deck below it) that keep a screen photo
+/// inside the frame's real screen area rather than stretched to the frame's
+/// full outer bounds. Measured directly from each bundled frame PNG's alpha
+/// channel by scanning row/column by row/column (corner curves and soft
+/// drop-shadow noise excluded), so the photo fits the actual screen edges
+/// precisely rather than leaving an oversized or mismatched gap.
+///
+/// Phone: screen rect 121,109 to 1846,3845 in the bundled 1965x3953 PNG
+/// (re-traced with the strict alpha>128 threshold at many x/y sample points;
+/// an earlier pass used a single symmetric top/bottom value derived mostly
+/// from the top edge, which was close enough to look right at a glance but
+/// left a ~3px background-colored sliver at the bottom in the full-res
+/// export — small in absolute terms, but a real, fixable mismatch).
+/// Laptop: screen rect 281,32 to 2319,1334 in the bundled 2600x1509 PNG
+/// (traced per-column/row with a strict alpha>128 threshold to exclude
+/// antialiasing and the soft drop-shadow below the laptop, both of which
+/// otherwise inflate the measured margins).
+fn screen_margins(kind: FrameKind) -> (f32, f32, f32, f32) {
+    match kind {
+        FrameKind::Phone => (0.0616, 0.0606, 0.0276, 0.0273),
+        FrameKind::Laptop => (0.1081, 0.1081, 0.0212, 0.1160),
+        // Android: screen rect 80,89 to 2978,6248 in the bundled 3091x6455
+        // PNG (a thin-outline frame whose screen was color-keyed from solid
+        // white to transparent; measured the same strict-threshold way).
+        FrameKind::Android => (0.0259, 0.0366, 0.0138, 0.0321),
+        // Android (waterdrop notch): screen rect 154,121 to 2434,5001 in the
+        // bundled 2580x5121 PNG, which already had a real transparent screen
+        // hole (no color-keying needed).
+        FrameKind::AndroidWaterdrop => (0.0597, 0.0566, 0.0236, 0.0234),
+        // iPad: screen rect 155,155 to 2076,3570 in the bundled 2230x3722
+        // PNG, which already had a real transparent screen hole.
+        FrameKind::Ipad => (0.0695, 0.0691, 0.0416, 0.0408),
+    }
+}
 
 /// The photo's (x, y, width, height) inset inside `frame`'s screen area.
-pub fn inset_screen_rect(frame: &Transform) -> (f32, f32, f32, f32) {
-    let margin_x = frame.width * SCREEN_MARGIN_X_FRAC;
-    let margin_y = frame.height * SCREEN_MARGIN_Y_FRAC;
-    (
-        frame.x + margin_x,
-        frame.y + margin_y,
-        frame.width - margin_x * 2.0,
-        frame.height - margin_y * 2.0,
-    )
+pub fn inset_screen_rect(frame: &Transform, kind: FrameKind) -> (f32, f32, f32, f32) {
+    let (ml, mr, mt, mb) = screen_margins(kind);
+    let left = frame.width * ml;
+    let right = frame.width * mr;
+    let top = frame.height * mt;
+    let bottom = frame.height * mb;
+    (frame.x + left, frame.y + top, frame.width - left - right, frame.height - top - bottom)
 }
 
 /// A real photo sized and clipped to sit inside a device frame's screen area
 /// (with a safety margin so the frame stays visibly bigger than the photo),
 /// so it reads as actual on-screen app content once the frame's bezel/notch
 /// is painted on top of it.
-pub fn screen_photo_layer(id: u64, frame_id: u64, frame: &Transform, path: &str) -> Layer {
-    let (x, y, w, h) = inset_screen_rect(frame);
+pub fn screen_photo_layer(id: u64, frame_id: u64, frame: &Transform, kind: FrameKind, path: &str) -> Layer {
+    let (x, y, w, h) = inset_screen_rect(frame, kind);
     let crop = aspect_crop(path, w, h);
+    let corner_radius = match kind {
+        // Traced the screen hole's own corner curve directly (bottom-left
+        // corner reaches the flat edge ~180px in from x=121 at a screen
+        // width of 1725px): 0.12 over-rounded the photo, cutting a visible
+        // gap at the bottom corners.
+        FrameKind::Phone => w * 0.103,
+        FrameKind::Laptop => w * 0.006,
+        FrameKind::Android => w * 0.05,
+        FrameKind::AndroidWaterdrop => w * 0.05,
+        FrameKind::Ipad => w * 0.04,
+    };
     Layer {
         id,
         name: "Screen Photo".to_string(),
@@ -148,7 +289,7 @@ pub fn screen_photo_layer(id: u64, frame_id: u64, frame: &Transform, path: &str)
             opacity: 100.0,
             mirror_h: false,
             mirror_v: false,
-            corner_radius: w * 0.12,
+            corner_radius,
             shadow: ShadowStyle::default(),
         },
     }
@@ -234,7 +375,7 @@ fn minimal_light(photos: &BundledPhotos) -> Project {
 
     let frame_id = p.alloc_id();
     let photo_id = p.alloc_id();
-    p.layers.push(screen_photo_layer(photo_id, frame_id, &frame_t, &photos.beach_horizon));
+    p.layers.push(screen_photo_layer(photo_id, frame_id, &frame_t, FrameKind::Phone, &photos.beach_horizon));
     p.layers.push(base_frame(frame_id, frame_x, frame_y, 1120.0, 2280.0, FrameColor::SpaceGray, photos));
 
     let text_id = p.alloc_id();
@@ -282,7 +423,7 @@ fn gradient_sunset(photos: &BundledPhotos) -> Project {
 
     let frame_id = p.alloc_id();
     let photo_id = p.alloc_id();
-    p.layers.push(screen_photo_layer(photo_id, frame_id, &frame_t, &photos.sunset_pier));
+    p.layers.push(screen_photo_layer(photo_id, frame_id, &frame_t, FrameKind::Phone, &photos.sunset_pier));
     p.layers.push(base_frame(
         frame_id,
         frame_t.x,
@@ -343,7 +484,7 @@ fn bold_dark(photos: &BundledPhotos) -> Project {
 
     let frame_id = p.alloc_id();
     let photo_id = p.alloc_id();
-    p.layers.push(screen_photo_layer(photo_id, frame_id, &frame_t, &photos.city_night));
+    p.layers.push(screen_photo_layer(photo_id, frame_id, &frame_t, FrameKind::Phone, &photos.city_night));
     p.layers.push(base_frame(
         frame_id,
         frame_t.x,
@@ -412,7 +553,7 @@ fn pastel_sky(photos: &BundledPhotos) -> Project {
 
     let frame_id = p.alloc_id();
     let photo_id = p.alloc_id();
-    p.layers.push(screen_photo_layer(photo_id, frame_id, &frame_t, &photos.calm_lake));
+    p.layers.push(screen_photo_layer(photo_id, frame_id, &frame_t, FrameKind::Phone, &photos.calm_lake));
     p.layers.push(base_frame(
         frame_id,
         frame_t.x,
@@ -489,14 +630,14 @@ fn panorama_duo(photos: &BundledPhotos) -> Project {
 
     let left_id = p.alloc_id();
     let photo_left_id = p.alloc_id();
-    p.layers.push(screen_photo_layer(photo_left_id, left_id, &left_t, &photos.dunes));
+    p.layers.push(screen_photo_layer(photo_left_id, left_id, &left_t, FrameKind::Phone, &photos.dunes));
     let mut left = base_frame(left_id, left_t.x, left_t.y, left_t.width, left_t.height, FrameColor::SpaceGray, photos);
     left.transform.rotation_deg = -6.0;
     p.layers.push(left);
 
     let right_id = p.alloc_id();
     let photo_right_id = p.alloc_id();
-    p.layers.push(screen_photo_layer(photo_right_id, right_id, &right_t, &photos.coastline));
+    p.layers.push(screen_photo_layer(photo_right_id, right_id, &right_t, FrameKind::Phone, &photos.coastline));
     let mut right = base_frame(right_id, right_t.x, right_t.y, right_t.width, right_t.height, FrameColor::SpaceGray, photos);
     right.transform.rotation_deg = 6.0;
     p.layers.push(right);
@@ -542,7 +683,7 @@ fn feature_badge(photos: &BundledPhotos) -> Project {
 
     let frame_id = p.alloc_id();
     let photo_id = p.alloc_id();
-    p.layers.push(screen_photo_layer(photo_id, frame_id, &frame_t, &photos.gold_interior));
+    p.layers.push(screen_photo_layer(photo_id, frame_id, &frame_t, FrameKind::Phone, &photos.gold_interior));
     p.layers.push(base_frame(
         frame_id,
         frame_t.x,
@@ -642,7 +783,7 @@ fn clean_mono(photos: &BundledPhotos) -> Project {
 
     let frame_id = p.alloc_id();
     let photo_id = p.alloc_id();
-    p.layers.push(screen_photo_layer(photo_id, frame_id, &frame_t, &photos.mono_pier));
+    p.layers.push(screen_photo_layer(photo_id, frame_id, &frame_t, FrameKind::Phone, &photos.mono_pier));
     p.layers.push(base_frame(
         frame_id,
         frame_t.x,
@@ -686,5 +827,208 @@ fn clean_mono(photos: &BundledPhotos) -> Project {
         [20, 20, 20, 255],
         TextAlign::Center,
     ));
+    p
+}
+
+fn macbook_showcase(photos: &BundledPhotos) -> Project {
+    let canvas_w = 2880.0f32;
+    let canvas_h = 1800.0f32;
+    let mut p = Project {
+        canvas_width: canvas_w as u32,
+        canvas_height: canvas_h as u32,
+        background: Background::Gradient {
+            from: [235, 238, 245, 255],
+            to: [208, 216, 230, 255],
+            angle_deg: 90.0,
+        },
+        layers: Vec::new(),
+        next_id: 1,
+        selected_layer: None,
+    };
+
+    let head_id = p.alloc_id();
+    p.layers.push(base_text(
+        head_id,
+        "Built for your Mac",
+        140.0,
+        110.0,
+        canvas_w - 280.0,
+        140.0,
+        76.0,
+        700,
+        [30, 32, 38, 255],
+        TextAlign::Center,
+    ));
+
+    // Matches the bundled macbook_frame.png's own aspect ratio (2600x1509).
+    let frame_w = 2260.0;
+    let frame_h = frame_w * (1509.0 / 2600.0);
+    let frame_t = Transform {
+        x: (canvas_w - frame_w) / 2.0,
+        y: canvas_h - frame_h - 120.0,
+        width: frame_w,
+        height: frame_h,
+        rotation_deg: 0.0,
+        opacity: 100.0,
+        mirror_h: false,
+        mirror_v: false,
+        corner_radius: 0.0,
+        shadow: ShadowStyle::default(),
+    };
+
+    let frame_id = p.alloc_id();
+    let photo_id = p.alloc_id();
+    p.layers.push(screen_photo_layer(photo_id, frame_id, &frame_t, FrameKind::Laptop, &photos.gold_interior));
+    p.layers.push(base_laptop_frame(frame_id, frame_t.x, frame_t.y, frame_t.width, frame_t.height, photos));
+
+    p
+}
+
+fn android_showcase(photos: &BundledPhotos) -> Project {
+    let mut p = Project {
+        canvas_width: CANVAS_WIDTH,
+        canvas_height: CANVAS_HEIGHT,
+        background: Background::Gradient {
+            from: [214, 233, 220, 255],
+            to: [255, 255, 255, 255],
+            angle_deg: 90.0,
+        },
+        layers: Vec::new(),
+        next_id: 1,
+        selected_layer: None,
+    };
+
+    let frame_w = 1000.0;
+    let frame_h = frame_w * (6455.0 / 3091.0);
+    let frame_t = Transform {
+        x: (CANVAS_WIDTH as f32 - frame_w) / 2.0,
+        y: CANVAS_HEIGHT as f32 * 0.5 - frame_h * 0.5 + 60.0,
+        width: frame_w,
+        height: frame_h,
+        rotation_deg: 0.0,
+        opacity: 100.0,
+        mirror_h: false,
+        mirror_v: false,
+        corner_radius: 0.0,
+        shadow: ShadowStyle::default(),
+    };
+
+    let frame_id = p.alloc_id();
+    let photo_id = p.alloc_id();
+    p.layers.push(screen_photo_layer(photo_id, frame_id, &frame_t, FrameKind::Android, &photos.coastline));
+    p.layers.push(base_android_frame(frame_id, frame_t.x, frame_t.y, frame_t.width, frame_t.height, photos));
+
+    let head_id = p.alloc_id();
+    p.layers.push(base_text(
+        head_id,
+        "Runs great on Android",
+        90.0,
+        260.0,
+        CANVAS_WIDTH as f32 - 180.0,
+        150.0,
+        76.0,
+        700,
+        [30, 50, 38, 255],
+        TextAlign::Center,
+    ));
+
+    p
+}
+
+fn android_waterdrop_showcase(photos: &BundledPhotos) -> Project {
+    let mut p = Project {
+        canvas_width: CANVAS_WIDTH,
+        canvas_height: CANVAS_HEIGHT,
+        background: Background::Gradient {
+            from: [255, 235, 214, 255],
+            to: [255, 255, 255, 255],
+            angle_deg: 90.0,
+        },
+        layers: Vec::new(),
+        next_id: 1,
+        selected_layer: None,
+    };
+
+    let frame_w = 1000.0;
+    let frame_h = frame_w * (5121.0 / 2580.0);
+    let frame_t = Transform {
+        x: (CANVAS_WIDTH as f32 - frame_w) / 2.0,
+        y: CANVAS_HEIGHT as f32 * 0.5 - frame_h * 0.5 + 60.0,
+        width: frame_w,
+        height: frame_h,
+        rotation_deg: 0.0,
+        opacity: 100.0,
+        mirror_h: false,
+        mirror_v: false,
+        corner_radius: 0.0,
+        shadow: ShadowStyle::default(),
+    };
+
+    let frame_id = p.alloc_id();
+    let photo_id = p.alloc_id();
+    p.layers.push(screen_photo_layer(photo_id, frame_id, &frame_t, FrameKind::AndroidWaterdrop, &photos.dunes));
+    p.layers.push(base_android_waterdrop_frame(frame_id, frame_t.x, frame_t.y, frame_t.width, frame_t.height, photos));
+
+    let head_id = p.alloc_id();
+    p.layers.push(base_text(
+        head_id,
+        "Android, perfected",
+        90.0,
+        260.0,
+        CANVAS_WIDTH as f32 - 180.0,
+        150.0,
+        76.0,
+        700,
+        [90, 55, 30, 255],
+        TextAlign::Center,
+    ));
+
+    p
+}
+
+fn ipad_showcase(photos: &BundledPhotos) -> Project {
+    let mut p = Project {
+        canvas_width: CANVAS_WIDTH,
+        canvas_height: CANVAS_HEIGHT,
+        background: Background::Color([246, 246, 248, 255]),
+        layers: Vec::new(),
+        next_id: 1,
+        selected_layer: None,
+    };
+
+    let frame_w = 980.0;
+    let frame_h = frame_w * (3722.0 / 2230.0);
+    let frame_t = Transform {
+        x: (CANVAS_WIDTH as f32 - frame_w) / 2.0,
+        y: CANVAS_HEIGHT as f32 * 0.5 - frame_h * 0.5 + 60.0,
+        width: frame_w,
+        height: frame_h,
+        rotation_deg: 0.0,
+        opacity: 100.0,
+        mirror_h: false,
+        mirror_v: false,
+        corner_radius: 0.0,
+        shadow: ShadowStyle::default(),
+    };
+
+    let frame_id = p.alloc_id();
+    let photo_id = p.alloc_id();
+    p.layers.push(screen_photo_layer(photo_id, frame_id, &frame_t, FrameKind::Ipad, &photos.coastline));
+    p.layers.push(base_ipad_frame(frame_id, frame_t.x, frame_t.y, frame_t.width, frame_t.height, photos));
+
+    let head_id = p.alloc_id();
+    p.layers.push(base_text(
+        head_id,
+        "Designed for iPad",
+        90.0,
+        260.0,
+        CANVAS_WIDTH as f32 - 180.0,
+        150.0,
+        76.0,
+        700,
+        [30, 30, 34, 255],
+        TextAlign::Center,
+    ));
+
     p
 }

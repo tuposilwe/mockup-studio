@@ -15,6 +15,17 @@ pub struct BundledPhotos {
     /// A real (user-supplied) transparent-screen iPhone frame PNG, used as
     /// the default device frame image instead of the procedural silhouette.
     pub iphone_frame: String,
+    /// A real (user-supplied) transparent-screen MacBook Pro frame PNG.
+    pub macbook_frame: String,
+    /// A real (user-supplied) Android phone outline frame; its solid white
+    /// screen fill was color-keyed to transparent so photos can show through.
+    pub android_frame: String,
+    /// A second real (user-supplied) Android frame, waterdrop-notch style,
+    /// with a genuinely transparent screen area already baked in.
+    pub android_waterdrop_frame: String,
+    /// A real (user-supplied) tablet/iPad frame with a genuinely transparent
+    /// screen area.
+    pub ipad_frame: String,
 }
 
 fn extract(dir: &std::path::Path, name: &str, bytes: &[u8]) -> String {
@@ -43,6 +54,14 @@ impl BundledPhotos {
             gold_interior: extract(&dir, "gold_interior.jpg", include_bytes!("../assets/bundled/gold_interior.jpg")),
             mono_pier: extract(&dir, "mono_pier.jpg", include_bytes!("../assets/bundled/mono_pier.jpg")),
             iphone_frame: extract(&dir, "iphone_frame.png", include_bytes!("../assets/bundled/iphone_frame.png")),
+            macbook_frame: extract(&dir, "macbook_frame.png", include_bytes!("../assets/bundled/macbook_frame.png")),
+            android_frame: extract(&dir, "android_frame.png", include_bytes!("../assets/bundled/android_frame.png")),
+            android_waterdrop_frame: extract(
+                &dir,
+                "android_waterdrop_frame.png",
+                include_bytes!("../assets/bundled/android_waterdrop_frame.png"),
+            ),
+            ipad_frame: extract(&dir, "ipad_frame.png", include_bytes!("../assets/bundled/ipad_frame.png")),
         }
     }
 }

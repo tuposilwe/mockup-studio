@@ -51,6 +51,10 @@ pub struct App {
     editing_buffer: String,
     editing_before: Option<Project>,
     editing_focus_pending: bool,
+    show_layers_panel: bool,
+    show_properties_panel: bool,
+    fullscreen_preview: bool,
+    fullscreen_texture: Option<egui::TextureHandle>,
 }
 
 impl App {
@@ -73,6 +77,10 @@ impl App {
             editing_buffer: String::new(),
             editing_before: None,
             editing_focus_pending: false,
+            show_layers_panel: true,
+            show_properties_panel: true,
+            fullscreen_preview: false,
+            fullscreen_texture: None,
         }
     }
 
@@ -107,6 +115,48 @@ impl App {
         self.project_path = None;
         self.screen = Screen::Editor;
         self.mark_dirty();
+    }
+
+    /// Full-window, chrome-free view of the design at full render resolution
+    /// (no toolbar, no panels) — lets a wide canvas like the MacBook template
+    /// be reviewed at its largest possible size. Exit via Escape, the close
+    /// button, or a click anywhere outside the image.
+    fn ui_fullscreen_preview(&mut self, ctx: &egui::Context) {
+        let escape = ctx.input(|i| i.key_pressed(egui::Key::Escape));
+        let mut exit = escape;
+
+        egui::CentralPanel::default()
+            .frame(egui::Frame::none().fill(egui::Color32::from_gray(24)))
+            .show(ctx, |ui| {
+                let available = ui.available_size();
+                if let Some(tex) = &self.fullscreen_texture {
+                    let tex_size = tex.size_vec2();
+                    let scale = (available.x / tex_size.x).min(available.y / tex_size.y).min(1.0).max(0.01);
+                    let draw_size = tex_size * scale;
+                    let rect = ui.max_rect();
+                    let image_rect = egui::Rect::from_center_size(rect.center(), draw_size);
+
+                    let bg_response = ui.allocate_rect(rect, egui::Sense::click());
+                    ui.painter().image(
+                        tex.id(),
+                        image_rect,
+                        egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                        egui::Color32::WHITE,
+                    );
+                    if bg_response.clicked() && !image_rect.contains(bg_response.interact_pointer_pos().unwrap_or_default()) {
+                        exit = true;
+                    }
+
+                    let close_rect = egui::Rect::from_min_size(rect.min + egui::vec2(16.0, 16.0), egui::vec2(36.0, 36.0));
+                    if ui.put(close_rect, egui::Button::new("✕")).clicked() {
+                        exit = true;
+                    }
+                }
+            });
+
+        if exit {
+            self.exit_fullscreen_preview();
+        }
     }
 
     fn ui_gallery(&mut self, ui: &mut egui::Ui) {
@@ -182,6 +232,23 @@ impl App {
             }
         }
         self.dirty = false;
+    }
+
+    /// Renders the design at full resolution and switches to a full-window
+    /// preview with no toolbar or panels, so a landscape canvas (like the
+    /// MacBook template) can be reviewed at its largest possible size.
+    fn enter_fullscreen_preview(&mut self, ctx: &egui::Context) {
+        let img = render_project(&self.project, &mut self.assets, &self.fonts);
+        let color_image =
+            egui::ColorImage::from_rgba_unmultiplied([img.width() as usize, img.height() as usize], img.as_raw());
+        self.fullscreen_texture =
+            Some(ctx.load_texture("fullscreen_preview", color_image, egui::TextureOptions::LINEAR));
+        self.fullscreen_preview = true;
+    }
+
+    fn exit_fullscreen_preview(&mut self) {
+        self.fullscreen_preview = false;
+        self.fullscreen_texture = None;
     }
 
     fn do_new(&mut self) {
@@ -340,12 +407,137 @@ impl App {
             kind: LayerKind::DeviceFrame(DeviceFrameLayer {
                 style: FrameColor::SpaceGray,
                 custom_image_path: Some(self.photos.iphone_frame.clone()),
+                kind: FrameKind::Phone,
             }),
             transform: Transform {
                 x: self.project.canvas_width as f32 * 0.5 - 560.0,
                 y: self.project.canvas_height as f32 * 0.5 - 1140.0,
                 width: 1120.0,
                 height: 2280.0,
+                rotation_deg: 0.0,
+                opacity: 100.0,
+                mirror_h: false,
+                mirror_v: false,
+                corner_radius: 0.0,
+                shadow: ShadowStyle::default(),
+            },
+        });
+        self.project.selected_layer = Some(id);
+        self.commit_edit(before);
+    }
+
+    fn do_add_laptop_frame(&mut self) {
+        let before = self.begin_edit();
+        let id = self.project.alloc_id();
+        let w = (self.project.canvas_width as f32 * 0.8).min(2260.0);
+        let h = w * (1509.0 / 2600.0);
+        self.project.layers.push(Layer {
+            id,
+            name: "MacBook Frame".to_string(),
+            visible: true,
+            kind: LayerKind::DeviceFrame(DeviceFrameLayer {
+                style: FrameColor::SpaceGray,
+                custom_image_path: Some(self.photos.macbook_frame.clone()),
+                kind: FrameKind::Laptop,
+            }),
+            transform: Transform {
+                x: (self.project.canvas_width as f32 - w) / 2.0,
+                y: (self.project.canvas_height as f32 - h) / 2.0,
+                width: w,
+                height: h,
+                rotation_deg: 0.0,
+                opacity: 100.0,
+                mirror_h: false,
+                mirror_v: false,
+                corner_radius: 0.0,
+                shadow: ShadowStyle::default(),
+            },
+        });
+        self.project.selected_layer = Some(id);
+        self.commit_edit(before);
+    }
+
+    fn do_add_android_frame(&mut self) {
+        let before = self.begin_edit();
+        let id = self.project.alloc_id();
+        let w = (self.project.canvas_width as f32 * 0.75).min(1000.0);
+        let h = w * (6455.0 / 3091.0);
+        self.project.layers.push(Layer {
+            id,
+            name: "Android Frame".to_string(),
+            visible: true,
+            kind: LayerKind::DeviceFrame(DeviceFrameLayer {
+                style: FrameColor::SpaceGray,
+                custom_image_path: Some(self.photos.android_frame.clone()),
+                kind: FrameKind::Android,
+            }),
+            transform: Transform {
+                x: (self.project.canvas_width as f32 - w) / 2.0,
+                y: (self.project.canvas_height as f32 - h) / 2.0,
+                width: w,
+                height: h,
+                rotation_deg: 0.0,
+                opacity: 100.0,
+                mirror_h: false,
+                mirror_v: false,
+                corner_radius: 0.0,
+                shadow: ShadowStyle::default(),
+            },
+        });
+        self.project.selected_layer = Some(id);
+        self.commit_edit(before);
+    }
+
+    fn do_add_android_waterdrop_frame(&mut self) {
+        let before = self.begin_edit();
+        let id = self.project.alloc_id();
+        let w = (self.project.canvas_width as f32 * 0.75).min(1000.0);
+        let h = w * (5121.0 / 2580.0);
+        self.project.layers.push(Layer {
+            id,
+            name: "Android Frame".to_string(),
+            visible: true,
+            kind: LayerKind::DeviceFrame(DeviceFrameLayer {
+                style: FrameColor::SpaceGray,
+                custom_image_path: Some(self.photos.android_waterdrop_frame.clone()),
+                kind: FrameKind::AndroidWaterdrop,
+            }),
+            transform: Transform {
+                x: (self.project.canvas_width as f32 - w) / 2.0,
+                y: (self.project.canvas_height as f32 - h) / 2.0,
+                width: w,
+                height: h,
+                rotation_deg: 0.0,
+                opacity: 100.0,
+                mirror_h: false,
+                mirror_v: false,
+                corner_radius: 0.0,
+                shadow: ShadowStyle::default(),
+            },
+        });
+        self.project.selected_layer = Some(id);
+        self.commit_edit(before);
+    }
+
+    fn do_add_ipad_frame(&mut self) {
+        let before = self.begin_edit();
+        let id = self.project.alloc_id();
+        let w = (self.project.canvas_width as f32 * 0.75).min(980.0);
+        let h = w * (3722.0 / 2230.0);
+        self.project.layers.push(Layer {
+            id,
+            name: "iPad Frame".to_string(),
+            visible: true,
+            kind: LayerKind::DeviceFrame(DeviceFrameLayer {
+                style: FrameColor::SpaceGray,
+                custom_image_path: Some(self.photos.ipad_frame.clone()),
+                kind: FrameKind::Ipad,
+            }),
+            transform: Transform {
+                x: (self.project.canvas_width as f32 - w) / 2.0,
+                y: (self.project.canvas_height as f32 - h) / 2.0,
+                width: w,
+                height: h,
                 rotation_deg: 0.0,
                 opacity: 100.0,
                 mirror_h: false,
@@ -476,6 +668,23 @@ impl App {
             if ui.button("Upscale Image File...").clicked() {
                 self.do_upscale_file();
             }
+            ui.separator();
+            if ui.button("Preview Full Screen").clicked() {
+                let ctx = ui.ctx().clone();
+                self.enter_fullscreen_preview(&ctx);
+            }
+            ui.separator();
+            ui.checkbox(&mut self.show_layers_panel, "Layers");
+            ui.checkbox(&mut self.show_properties_panel, "Properties");
+            if ui
+                .button("Compact Panels")
+                .on_hover_text("Shrink both side panels to their minimum width — handy for wide canvases like MacBook Showcase")
+                .clicked()
+            {
+                let ctx = ui.ctx().clone();
+                set_panel_width(&ctx, "layers", 110.0);
+                set_panel_width(&ctx, "properties", 150.0);
+            }
         });
         if let Some(status) = &self.status {
             ui.label(egui::RichText::new(status).weak());
@@ -519,6 +728,18 @@ impl App {
             }
             if ui.button("+ Frame").clicked() {
                 self.do_add_frame();
+            }
+            if ui.button("+ MacBook").clicked() {
+                self.do_add_laptop_frame();
+            }
+            if ui.button("+ Android").clicked() {
+                self.do_add_android_frame();
+            }
+            if ui.button("+ Android 2").clicked() {
+                self.do_add_android_waterdrop_frame();
+            }
+            if ui.button("+ iPad").clicked() {
+                self.do_add_ipad_frame();
             }
             if ui.button("+ Shape").clicked() {
                 self.do_add_shape();
@@ -606,6 +827,7 @@ impl App {
             self.commit_edit(before);
         }
 
+        let mut bg_changed = false;
         match &mut self.project.background {
             Background::Color(c) => {
                 let mut color = egui::Color32::from_rgba_unmultiplied(c[0], c[1], c[2], c[3]);
@@ -616,6 +838,7 @@ impl App {
                 );
                 if resp.changed() {
                     *c = color.to_array();
+                    bg_changed = true;
                 }
             }
             Background::Gradient { from, to, angle_deg } => {
@@ -623,13 +846,13 @@ impl App {
                 let mut c2 = egui::Color32::from_rgba_unmultiplied(to[0], to[1], to[2], to[3]);
                 ui.horizontal(|ui| {
                     ui.label("From");
-                    egui::color_picker::color_edit_button_srgba(ui, &mut c1, egui::color_picker::Alpha::Opaque);
+                    bg_changed |= egui::color_picker::color_edit_button_srgba(ui, &mut c1, egui::color_picker::Alpha::Opaque).changed();
                     ui.label("To");
-                    egui::color_picker::color_edit_button_srgba(ui, &mut c2, egui::color_picker::Alpha::Opaque);
+                    bg_changed |= egui::color_picker::color_edit_button_srgba(ui, &mut c2, egui::color_picker::Alpha::Opaque).changed();
                 });
                 *from = c1.to_array();
                 *to = c2.to_array();
-                ui.add(egui::Slider::new(angle_deg, 0.0..=360.0).text("Angle"));
+                bg_changed |= ui.add(egui::Slider::new(angle_deg, 0.0..=360.0).text("Angle")).changed();
             }
             Background::Image { path } => {
                 ui.horizontal(|ui| {
@@ -640,10 +863,14 @@ impl App {
                             .pick_file()
                         {
                             *path = p.to_string_lossy().to_string();
+                            bg_changed = true;
                         }
                     }
                 });
             }
+        }
+        if bg_changed {
+            self.mark_dirty();
         }
     }
 
@@ -1136,11 +1363,12 @@ impl App {
                                 // position (width/height unchanged by a move) so the photo
                                 // stays inside the frame's screen area, not stretched to
                                 // its full outer bounds.
+                                let kind = self.frame_kind(id);
                                 let inset = self
                                     .project
                                     .find_layer(id)
                                     .map(|l| l.transform.clone())
-                                    .map(|t| templates::inset_screen_rect(&t));
+                                    .map(|t| templates::inset_screen_rect(&t, kind));
                                 if let (Some(photo), Some((ix, iy, iw, ih))) =
                                     (self.project.find_layer_mut(photo_id), inset)
                                 {
@@ -1186,11 +1414,12 @@ impl App {
                             if let Some(photo_id) = linked_photo {
                                 // The frame's transform was just updated above, so re-reading
                                 // it here gives the new (x, y, w, h) to inset the photo from.
+                                let kind = self.frame_kind(id);
                                 let inset = self
                                     .project
                                     .find_layer(id)
                                     .map(|l| l.transform.clone())
-                                    .map(|t| templates::inset_screen_rect(&t));
+                                    .map(|t| templates::inset_screen_rect(&t, kind));
                                 if let (Some(photo), Some((ix, iy, iw, ih))) =
                                     (self.project.find_layer_mut(photo_id), inset)
                                 {
@@ -1315,7 +1544,7 @@ impl App {
     fn sync_linked_photo_transform(&mut self, id: u64) {
         let Some(photo_id) = self.linked_screen_photo(id) else { return };
         let Some(frame_t) = self.project.find_layer(id).map(|l| l.transform.clone()) else { return };
-        let (ix, iy, iw, ih) = templates::inset_screen_rect(&frame_t);
+        let (ix, iy, iw, ih) = templates::inset_screen_rect(&frame_t, self.frame_kind(id));
         if let Some(photo) = self.project.find_layer_mut(photo_id) {
             photo.transform.x = ix;
             photo.transform.y = iy;
@@ -1335,6 +1564,15 @@ impl App {
             self.find_screen_image_for_frame(id)
         } else {
             None
+        }
+    }
+
+    /// A frame layer's screen-inset kind (phone vs. laptop proportions);
+    /// defaults to Phone if `id` isn't a device frame.
+    fn frame_kind(&self, id: u64) -> FrameKind {
+        match self.project.find_layer(id).map(|l| &l.kind) {
+            Some(LayerKind::DeviceFrame(f)) => f.kind,
+            _ => FrameKind::Phone,
         }
     }
 
@@ -1374,14 +1612,15 @@ impl App {
                     self.commit_edit(before);
                 }
             }
-            LayerKind::DeviceFrame(_) => {
+            LayerKind::DeviceFrame(frame) => {
                 let frame_transform = hit_layer.transform.clone();
+                let frame_kind = frame.kind;
                 if let Some(path) = rfd::FileDialog::new()
                     .add_filter("Images", &["png", "jpg", "jpeg"])
                     .pick_file()
                 {
                     let path_str = path.to_string_lossy().to_string();
-                    let (_, _, inset_w, inset_h) = templates::inset_screen_rect(&frame_transform);
+                    let (_, _, inset_w, inset_h) = templates::inset_screen_rect(&frame_transform, frame_kind);
                     let crop = templates::aspect_crop(&path_str, inset_w, inset_h);
                     let before = self.begin_edit();
                     if let Some(existing_id) = self.find_screen_image_for_frame(hit_id) {
@@ -1394,7 +1633,8 @@ impl App {
                         self.project.selected_layer = Some(existing_id);
                     } else {
                         let new_id = self.project.alloc_id();
-                        let new_layer = templates::screen_photo_layer(new_id, hit_id, &frame_transform, &path_str);
+                        let new_layer =
+                            templates::screen_photo_layer(new_id, hit_id, &frame_transform, frame_kind, &path_str);
                         let frame_idx = self.project.layers.iter().position(|l| l.id == hit_id).unwrap_or(0);
                         self.project.layers.insert(frame_idx, new_layer);
                         self.project.selected_layer = Some(new_id);
@@ -1405,6 +1645,15 @@ impl App {
             _ => {}
         }
     }
+}
+
+/// Forces a resizable `SidePanel`'s persisted width, so a "Compact Panels"
+/// action can snap both side panels to their minimum width in one click
+/// instead of requiring the user to drag each boundary by hand.
+fn set_panel_width(ctx: &egui::Context, id_str: &str, width: f32) {
+    let id = egui::Id::new(id_str);
+    let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(width, 100.0));
+    ctx.data_mut(|d| d.insert_persisted(id, egui::containers::panel::PanelState { rect }));
 }
 
 fn scaled_project(project: &Project, scale: f32) -> Project {
@@ -1451,6 +1700,11 @@ impl eframe::App for App {
             }
         }
 
+        if self.screen == Screen::Editor && self.fullscreen_preview {
+            self.ui_fullscreen_preview(ctx);
+            return;
+        }
+
         match self.screen {
             Screen::Gallery => {
                 self.ensure_gallery(ctx);
@@ -1465,19 +1719,38 @@ impl eframe::App for App {
                     self.ui_toolbar(ui);
                 });
 
-                egui::SidePanel::left("layers").min_width(220.0).show(ctx, |ui| {
-                    self.ui_layers_panel(ui);
-                });
+                if self.show_layers_panel {
+                    egui::SidePanel::left("layers")
+                        .resizable(true)
+                        .default_width(220.0)
+                        .width_range(110.0..=400.0)
+                        .show(ctx, |ui| {
+                            self.ui_layers_panel(ui);
+                        });
+                }
 
-                egui::SidePanel::right("properties").min_width(280.0).show(ctx, |ui| {
-                    egui::ScrollArea::vertical().show(ui, |ui| {
-                        self.ui_properties_panel(ui);
+                if self.show_properties_panel {
+                    egui::SidePanel::right("properties")
+                        .resizable(true)
+                        .default_width(280.0)
+                        .width_range(150.0..=480.0)
+                        .show(ctx, |ui| {
+                            egui::ScrollArea::vertical().show(ui, |ui| {
+                                self.ui_properties_panel(ui);
+                            });
+                        });
+                }
+
+                // A small inner margin keeps the canvas's own drag-sense area
+                // (which otherwise starts flush at the panel boundary) from
+                // overlapping the side panels' resize-handle strip, which
+                // straddles that boundary and would otherwise lose the drag
+                // to the canvas widget on top of it.
+                egui::CentralPanel::default()
+                    .frame(egui::Frame::central_panel(&ctx.style()).inner_margin(8.0))
+                    .show(ctx, |ui| {
+                        self.ui_canvas(ui);
                     });
-                });
-
-                egui::CentralPanel::default().show(ctx, |ui| {
-                    self.ui_canvas(ui);
-                });
             }
         }
     }
