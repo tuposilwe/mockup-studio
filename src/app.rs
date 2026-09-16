@@ -2,6 +2,7 @@ use crate::assets::{AssetCache, FontManager};
 use crate::bundled::BundledPhotos;
 use crate::history::History;
 use crate::model::*;
+use crate::network;
 use crate::render::render_project;
 use crate::templates;
 use eframe::egui;
@@ -66,6 +67,27 @@ pub struct App {
     /// handles — those stay single-layer only; multi-select only adds the
     /// ability to move everything selected together.
     selected_layers: Vec<u64>,
+    net: Option<network::NetworkState>,
+    net_peer_count: usize,
+    show_collab_window: bool,
+    collab_join_addr: String,
+    /// The join-address field is hidden until "Join Session" is clicked, so
+    /// the choice presented up front is just "Host Session" / "Join
+    /// Session" side by side.
+    show_join_input: bool,
+    /// True while a project snapshot just arrived over the network and is
+    /// being applied locally — suppresses re-broadcasting it right back out,
+    /// which would otherwise ping-pong the same edit between peers forever.
+    applying_remote: bool,
+    collab_name: String,
+    /// The collaborator's last-known pointer position (in project/canvas
+    /// space) and when it arrived, so a stale cursor (they disconnected, or
+    /// just aren't moving) can fade from the canvas instead of sticking.
+    remote_cursor: Option<(f32, f32, String, std::time::Instant)>,
+    /// Set while a "Join" is in flight (connecting happens on a background
+    /// thread so it can't freeze the UI); polled each frame until it
+    /// resolves to either a connected session or an error.
+    pending_join: Option<(std::sync::mpsc::Receiver<Result<network::NetworkState, String>>, String)>,
 }
 
 impl App {
@@ -94,6 +116,17 @@ impl App {
             fullscreen_texture: None,
             dark_mode: true,
             selected_layers: Vec::new(),
+            net: None,
+            net_peer_count: 0,
+            show_collab_window: false,
+            collab_join_addr: String::new(),
+            show_join_input: false,
+            applying_remote: false,
+            collab_name: std::env::var("USER")
+                .or_else(|_| std::env::var("USERNAME"))
+                .unwrap_or_else(|_| "Collaborator".to_string()),
+            remote_cursor: None,
+            pending_join: None,
         }
     }
 
@@ -252,6 +285,161 @@ impl App {
     fn commit_edit(&mut self, before: Project) {
         self.history.push(before);
         self.mark_dirty();
+        self.broadcast_project();
+    }
+
+    /// Sends the current project to any connected collaborators. A no-op
+    /// when not connected, and while a remote update is being applied (so we
+    /// don't immediately bounce it right back to whoever sent it).
+    fn broadcast_project(&self) {
+        if self.applying_remote {
+            return;
+        }
+        if let Some(net) = &self.net {
+            net.send_project(&self.project);
+        }
+    }
+
+    /// Drains any events from the network thread: applies the latest
+    /// incoming project snapshot (if any) and updates connection status.
+    /// The host also re-sends its current project the moment a peer
+    /// connects, so a newly joined collaborator immediately sees the design
+    /// instead of waiting for the next edit.
+    /// Checks whether a background "Join" attempt has resolved yet. Must run
+    /// even with no active session, since that's exactly when a join is
+    /// pending.
+    fn poll_pending_join(&mut self) {
+        let Some((rx, addr)) = &self.pending_join else { return };
+        match rx.try_recv() {
+            Ok(Ok(net)) => {
+                self.status = Some(format!("Joined {addr}"));
+                self.net = Some(net);
+                self.net_peer_count = 1;
+                self.pending_join = None;
+            }
+            Ok(Err(e)) => {
+                self.status = Some(format!("Could not join {addr}: {e}"));
+                self.pending_join = None;
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => {}
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                self.status = Some(format!("Could not join {addr}: connection attempt was lost"));
+                self.pending_join = None;
+            }
+        }
+    }
+
+    fn poll_network(&mut self) {
+        self.poll_pending_join();
+        let Some(net) = &self.net else { return };
+        let mut latest_project: Option<Project> = None;
+        let mut peer_just_connected = false;
+        let mut disconnected = false;
+        while let Ok(event) = net.events.try_recv() {
+            match event {
+                network::NetEvent::PeerConnected => {
+                    self.net_peer_count += 1;
+                    peer_just_connected = true;
+                }
+                network::NetEvent::PeerDisconnected => {
+                    self.net_peer_count = self.net_peer_count.saturating_sub(1);
+                    disconnected = true;
+                }
+                network::NetEvent::ProjectReceived(p) => latest_project = Some(p),
+                network::NetEvent::CursorReceived { x, y, name } => {
+                    self.remote_cursor = Some((x, y, name, std::time::Instant::now()));
+                }
+            }
+        }
+        if let Some(project) = latest_project {
+            self.applying_remote = true;
+            self.project = project;
+            self.selected_layers.clear();
+            self.project.selected_layer = None;
+            self.mark_dirty();
+            self.applying_remote = false;
+        }
+        if disconnected {
+            self.status = Some("A collaborator disconnected".to_string());
+            self.remote_cursor = None;
+        }
+        if peer_just_connected && self.net.as_ref().map(|n| n.role) == Some(network::Role::Host) {
+            self.broadcast_project();
+        }
+    }
+
+    fn ui_collab_window(&mut self, ctx: &egui::Context) {
+        if !self.show_collab_window {
+            return;
+        }
+        let mut open = true;
+        egui::Window::new("Collaborate").open(&mut open).resizable(false).show(ctx, |ui| {
+            if let Some(net) = &self.net {
+                ui.label(&net.label);
+                ui.label(format!("{} collaborator(s) connected", self.net_peer_count));
+                ui.add_space(4.0);
+                if ui.button("Leave Session").clicked() {
+                    self.net = None;
+                    self.net_peer_count = 0;
+                    self.remote_cursor = None;
+                    self.show_join_input = false;
+                    self.status = Some("Left the collaboration session".to_string());
+                }
+            } else {
+                ui.label("Host a session for someone else on this network to join, or join theirs.");
+                ui.horizontal(|ui| {
+                    ui.label("Your name (shown on your cursor):");
+                    ui.text_edit_singleline(&mut self.collab_name);
+                });
+                ui.add_space(8.0);
+
+                let connecting = self.pending_join.is_some();
+                ui.horizontal(|ui| {
+                    if ui.add_enabled(!connecting, egui::Button::new("Host Session")).clicked() {
+                        match network::host(network::DEFAULT_PORT) {
+                            Ok(net) => {
+                                self.net = Some(net);
+                                self.net_peer_count = 0;
+                                self.show_join_input = false;
+                                self.status = Some("Hosting — waiting for a collaborator to join".to_string());
+                            }
+                            Err(e) => self.status = Some(format!("Could not host: {e}")),
+                        }
+                    }
+                    if ui.add_enabled(!connecting, egui::Button::new("Join Session")).clicked() {
+                        self.show_join_input = true;
+                    }
+                });
+
+                if self.show_join_input {
+                    ui.add_space(10.0);
+                    ui.label("Their address (shown on their screen when they host):");
+                    ui.horizontal(|ui| {
+                        ui.add_enabled(!connecting, egui::TextEdit::singleline(&mut self.collab_join_addr));
+                        if ui.add_enabled(!connecting, egui::Button::new("Connect")).clicked() {
+                            let typed = self.collab_join_addr.trim();
+                            let addr = if typed.contains(':') {
+                                typed.to_string()
+                            } else {
+                                format!("{typed}:{}", network::DEFAULT_PORT)
+                            };
+                            let rx = network::join(&addr);
+                            self.pending_join = Some((rx, addr.clone()));
+                            self.status = Some(format!("Connecting to {addr}..."));
+                        }
+                        if connecting {
+                            ui.spinner();
+                            ui.label("Connecting...");
+                        }
+                    });
+                } else {
+                    ui.add_space(6.0);
+                    let ip = network::local_ip().unwrap_or_else(|| "unknown".to_string());
+                    ui.label(format!("Your address (share this if you host): {ip}:{}", network::DEFAULT_PORT));
+                }
+            }
+        });
+        self.show_collab_window = open;
     }
 
     fn update_texture(&mut self, ctx: &egui::Context) {
@@ -778,6 +966,15 @@ impl App {
             if ui.button("Preview Full Screen").clicked() {
                 let ctx = ui.ctx().clone();
                 self.enter_fullscreen_preview(&ctx);
+            }
+            ui.separator();
+            let collab_label = if self.net.is_some() {
+                format!("Collaborate... ({} connected)", self.net_peer_count)
+            } else {
+                "Collaborate...".to_string()
+            };
+            if ui.button(collab_label).clicked() {
+                self.show_collab_window = !self.show_collab_window;
             }
             ui.separator();
             ui.checkbox(&mut self.show_layers_panel, "Layers");
@@ -1655,6 +1852,7 @@ impl App {
             self.drag = None;
             self.drag_snapshot_taken = false;
             self.mark_dirty(); // re-render at full preview quality now that dragging has stopped
+            self.broadcast_project(); // drags update history at drag-start, not via commit_edit
         }
 
         if response.double_clicked() {
@@ -1685,6 +1883,32 @@ impl App {
                     None if !additive => self.clear_selection(),
                     None => {}
                 }
+            }
+        }
+
+        // Share our pointer position with any connected collaborator, and
+        // draw theirs — both sides work in project/canvas coordinates, so
+        // this lines up correctly even if the two windows are different
+        // sizes or zoom levels.
+        if let Some(net) = &self.net {
+            if let Some(hover) = response.hover_pos() {
+                let p = to_project(hover);
+                net.send_cursor(p.x, p.y, &self.collab_name);
+            }
+        }
+        if let Some((x, y, name, seen_at)) = &self.remote_cursor {
+            if seen_at.elapsed() < std::time::Duration::from_secs(5) {
+                let screen_pos = rect.min + egui::vec2(to_screen(*x), to_screen(*y));
+                let color = egui::Color32::from_rgb(255, 100, 30);
+                ui.painter().circle_filled(screen_pos, 5.0, color);
+                ui.painter().circle_stroke(screen_pos, 5.0, egui::Stroke::new(1.5f32, egui::Color32::WHITE));
+                ui.painter().text(
+                    screen_pos + egui::vec2(8.0, -4.0),
+                    egui::Align2::LEFT_BOTTOM,
+                    name,
+                    egui::FontId::proportional(12.0),
+                    color,
+                );
             }
         }
     }
@@ -1901,11 +2125,19 @@ impl eframe::App for App {
                 });
             }
             Screen::Editor => {
+                self.poll_network();
+                if self.net.is_some() || self.pending_join.is_some() {
+                    // Keep polling for incoming edits (or a join resolving)
+                    // even with no local input, instead of only repainting
+                    // on user interaction.
+                    ctx.request_repaint_after(std::time::Duration::from_millis(200));
+                }
                 self.update_texture(ctx);
 
                 egui::TopBottomPanel::top("toolbar").show(ctx, |ui| {
                     self.ui_toolbar(ui);
                 });
+                self.ui_collab_window(ctx);
 
                 if self.show_layers_panel {
                     egui::SidePanel::left("layers")
