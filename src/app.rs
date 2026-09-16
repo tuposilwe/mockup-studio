@@ -719,7 +719,7 @@ impl App {
 
     fn ui_layers_panel(&mut self, ui: &mut egui::Ui) {
         ui.heading("Layers");
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             if ui.button("+ Image").clicked() {
                 self.do_add_image();
             }
