@@ -55,6 +55,7 @@ pub struct App {
     show_properties_panel: bool,
     fullscreen_preview: bool,
     fullscreen_texture: Option<egui::TextureHandle>,
+    dark_mode: bool,
 }
 
 impl App {
@@ -81,6 +82,7 @@ impl App {
             show_properties_panel: true,
             fullscreen_preview: false,
             fullscreen_texture: None,
+            dark_mode: true,
         }
     }
 
@@ -160,7 +162,14 @@ impl App {
     }
 
     fn ui_gallery(&mut self, ui: &mut egui::Ui) {
-        ui.heading("Choose a template to start editing");
+        ui.horizontal(|ui| {
+            ui.heading("Choose a template to start editing");
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui.button(self.theme_toggle_label()).clicked() {
+                    self.dark_mode = !self.dark_mode;
+                }
+            });
+        });
         ui.label("Pick a prepared mockup, then customize every layer just like in the editor.");
         ui.add_space(8.0);
 
@@ -618,7 +627,7 @@ impl App {
     }
 
     fn ui_toolbar(&mut self, ui: &mut egui::Ui) {
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             if ui.button("Templates...").clicked() {
                 self.screen = Screen::Gallery;
             }
@@ -685,9 +694,21 @@ impl App {
                 set_panel_width(&ctx, "layers", 110.0);
                 set_panel_width(&ctx, "properties", 150.0);
             }
+            ui.separator();
+            if ui.button(self.theme_toggle_label()).clicked() {
+                self.dark_mode = !self.dark_mode;
+            }
         });
         if let Some(status) = &self.status {
             ui.label(egui::RichText::new(status).weak());
+        }
+    }
+
+    fn theme_toggle_label(&self) -> String {
+        if self.dark_mode {
+            "☀ Light Mode".to_string()
+        } else {
+            "🌙 Dark Mode".to_string()
         }
     }
 
@@ -1680,6 +1701,8 @@ fn scaled_project(project: &Project, scale: f32) -> Project {
 
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        ctx.set_visuals(if self.dark_mode { egui::Visuals::dark() } else { egui::Visuals::light() });
+
         // Global Ctrl/Cmd+Z (undo) and Ctrl/Cmd+Shift+Z or Ctrl+Y (redo), but
         // only when no text field (inline text edit, layer name, etc.) has
         // keyboard focus — those get their own built-in undo instead.
