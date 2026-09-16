@@ -17,6 +17,10 @@ enum Corner {
 
 enum DragMode {
     Move { start_pointer: egui::Pos2, start_xy: (f32, f32) },
+    /// Moves every layer in the current multi-selection together by the
+    /// same screen-space delta (no snapping — snapping a whole group against
+    /// its own members' edges gets ambiguous fast, so group moves are raw).
+    MoveGroup { start_pointer: egui::Pos2, starts: Vec<(u64, f32, f32)> },
     ResizeCorner { corner: Corner, start_pointer: egui::Pos2, start_rect: (f32, f32, f32, f32) },
     Rotate { start_pointer_angle: f32, start_rotation: f32 },
 }
@@ -56,6 +60,12 @@ pub struct App {
     fullscreen_preview: bool,
     fullscreen_texture: Option<egui::TextureHandle>,
     dark_mode: bool,
+    /// The full multi-selection (Shift/Cmd-click to add/remove a layer).
+    /// Always kept in sync with `project.selected_layer`, which remains the
+    /// "primary" entry used for the properties panel and resize/rotate
+    /// handles — those stay single-layer only; multi-select only adds the
+    /// ability to move everything selected together.
+    selected_layers: Vec<u64>,
 }
 
 impl App {
@@ -83,6 +93,29 @@ impl App {
             fullscreen_preview: false,
             fullscreen_texture: None,
             dark_mode: true,
+            selected_layers: Vec::new(),
+        }
+    }
+
+    fn select_only(&mut self, id: u64) {
+        self.project.selected_layer = Some(id);
+        self.selected_layers = vec![id];
+    }
+
+    fn clear_selection(&mut self) {
+        self.project.selected_layer = None;
+        self.selected_layers.clear();
+    }
+
+    fn toggle_selection(&mut self, id: u64) {
+        if let Some(pos) = self.selected_layers.iter().position(|&x| x == id) {
+            self.selected_layers.remove(pos);
+            if self.project.selected_layer == Some(id) {
+                self.project.selected_layer = self.selected_layers.last().copied();
+            }
+        } else {
+            self.selected_layers.push(id);
+            self.project.selected_layer = Some(id);
         }
     }
 
@@ -368,7 +401,7 @@ impl App {
                     shadow: ShadowStyle::default(),
                 },
             });
-            self.project.selected_layer = Some(id);
+            self.select_only(id);
             self.commit_edit(before);
         }
     }
@@ -402,7 +435,7 @@ impl App {
                 shadow: ShadowStyle::default(),
             },
         });
-        self.project.selected_layer = Some(id);
+        self.select_only(id);
         self.commit_edit(before);
     }
 
@@ -431,7 +464,7 @@ impl App {
                 shadow: ShadowStyle::default(),
             },
         });
-        self.project.selected_layer = Some(id);
+        self.select_only(id);
         self.commit_edit(before);
     }
 
@@ -462,7 +495,7 @@ impl App {
                 shadow: ShadowStyle::default(),
             },
         });
-        self.project.selected_layer = Some(id);
+        self.select_only(id);
         self.commit_edit(before);
     }
 
@@ -493,7 +526,7 @@ impl App {
                 shadow: ShadowStyle::default(),
             },
         });
-        self.project.selected_layer = Some(id);
+        self.select_only(id);
         self.commit_edit(before);
     }
 
@@ -524,7 +557,7 @@ impl App {
                 shadow: ShadowStyle::default(),
             },
         });
-        self.project.selected_layer = Some(id);
+        self.select_only(id);
         self.commit_edit(before);
     }
 
@@ -555,7 +588,7 @@ impl App {
                 shadow: ShadowStyle::default(),
             },
         });
-        self.project.selected_layer = Some(id);
+        self.select_only(id);
         self.commit_edit(before);
     }
 
@@ -582,32 +615,55 @@ impl App {
                 shadow: ShadowStyle::default(),
             },
         });
-        self.project.selected_layer = Some(id);
+        self.select_only(id);
         self.commit_edit(before);
     }
 
     fn do_duplicate(&mut self) {
-        let Some(sel) = self.project.selected_layer else { return };
-        let before = self.begin_edit();
-        if let Some(layer) = self.project.find_layer(sel).cloned() {
-            let new_id = self.project.alloc_id();
-            let mut new_layer = layer;
-            new_layer.id = new_id;
-            new_layer.name = format!("{} copy", new_layer.name);
-            new_layer.transform.x += 24.0;
-            new_layer.transform.y += 24.0;
-            self.project.layers.push(new_layer);
-            self.project.selected_layer = Some(new_id);
-            self.commit_edit(before);
+        let targets = self.selection_or_primary();
+        if targets.is_empty() {
+            return;
         }
+        let before = self.begin_edit();
+        let mut new_ids = Vec::new();
+        for sel in targets {
+            if let Some(layer) = self.project.find_layer(sel).cloned() {
+                let new_id = self.project.alloc_id();
+                let mut new_layer = layer;
+                new_layer.id = new_id;
+                new_layer.name = format!("{} copy", new_layer.name);
+                new_layer.transform.x += 24.0;
+                new_layer.transform.y += 24.0;
+                self.project.layers.push(new_layer);
+                new_ids.push(new_id);
+            }
+        }
+        if let Some(&last) = new_ids.last() {
+            self.project.selected_layer = Some(last);
+        }
+        self.selected_layers = new_ids;
+        self.commit_edit(before);
     }
 
     fn do_delete(&mut self) {
-        let Some(sel) = self.project.selected_layer else { return };
+        let targets = self.selection_or_primary();
+        if targets.is_empty() {
+            return;
+        }
         let before = self.begin_edit();
-        self.project.layers.retain(|l| l.id != sel);
-        self.project.selected_layer = None;
+        self.project.layers.retain(|l| !targets.contains(&l.id));
+        self.clear_selection();
         self.commit_edit(before);
+    }
+
+    /// The full multi-selection, falling back to just the primary selected
+    /// layer when nothing is multi-selected (e.g. a plain single click).
+    fn selection_or_primary(&self) -> Vec<u64> {
+        if !self.selected_layers.is_empty() {
+            self.selected_layers.clone()
+        } else {
+            self.project.selected_layer.into_iter().collect()
+        }
     }
 
     fn do_undo(&mut self) {
@@ -770,22 +826,26 @@ impl App {
 
         let mut move_up: Option<usize> = None;
         let mut move_down: Option<usize> = None;
-        let mut select: Option<u64> = None;
+        let mut select: Option<(u64, bool)> = None;
         let mut toggle_visible: Option<u64> = None;
         let len = self.project.layers.len();
+
+        ui.label(egui::RichText::new("Shift/Cmd-click to select multiple, then drag any of them to move the group.").weak().small());
 
         egui::ScrollArea::vertical().show(ui, |ui| {
             for idx in (0..len).rev() {
                 let layer = &self.project.layers[idx];
-                let is_selected = self.project.selected_layer == Some(layer.id);
+                let is_selected = self.selected_layers.contains(&layer.id);
                 ui.horizontal(|ui| {
                     let mut visible = layer.visible;
                     if ui.checkbox(&mut visible, "").changed() {
                         toggle_visible = Some(layer.id);
                     }
                     let label = format!("{} ({})", layer.name, layer.kind.type_name());
-                    if ui.selectable_label(is_selected, label).clicked() {
-                        select = Some(layer.id);
+                    let resp = ui.selectable_label(is_selected, label);
+                    if resp.clicked() {
+                        let additive = ui.input(|i| i.modifiers.shift || i.modifiers.command || i.modifiers.ctrl);
+                        select = Some((layer.id, additive));
                     }
                     if idx + 1 < len && ui.small_button("^").clicked() {
                         move_up = Some(idx);
@@ -797,8 +857,12 @@ impl App {
             }
         });
 
-        if let Some(id) = select {
-            self.project.selected_layer = Some(id);
+        if let Some((id, additive)) = select {
+            if additive {
+                self.toggle_selection(id);
+            } else {
+                self.select_only(id);
+            }
         }
         if let Some(id) = toggle_visible {
             let before = self.begin_edit();
@@ -1220,7 +1284,18 @@ impl App {
         let accent = egui::Color32::from_rgb(60, 140, 255);
         let mut corner_handles: [Option<(Corner, egui::Pos2)>; 4] = [None; 4];
         let mut rotate_handle: Option<egui::Pos2> = None;
-        if let Some(sel_id) = self.project.selected_layer {
+        // Resize/rotate handles only make sense for a single selected layer;
+        // with a multi-selection, outline every selected layer instead.
+        if self.selected_layers.len() > 1 {
+            for &id in &self.selected_layers {
+                if let Some(layer) = self.project.find_layer(id) {
+                    let t = &layer.transform;
+                    let min = rect.min + egui::vec2(t.x * scale, t.y * scale);
+                    let max = min + egui::vec2(t.width * scale, t.height * scale);
+                    ui.painter().rect_stroke(egui::Rect::from_min_max(min, max), 0.0, egui::Stroke::new(2.0f32, accent));
+                }
+            }
+        } else if let Some(sel_id) = self.project.selected_layer {
             if let Some(layer) = self.project.find_layer(sel_id) {
                 let t = &layer.transform;
                 let min = rect.min + egui::vec2(t.x * scale, t.y * scale);
@@ -1294,12 +1369,24 @@ impl App {
                 if self.drag.is_none() {
                     let p = to_project(pointer);
                     if let Some(hit_id) = self.hit_test_layer(p) {
-                        self.project.selected_layer = Some(hit_id);
-                        if let Some(layer) = self.project.find_layer(hit_id) {
-                            self.drag = Some(DragMode::Move {
-                                start_pointer: pointer,
-                                start_xy: (layer.transform.x, layer.transform.y),
-                            });
+                        if self.selected_layers.len() > 1 && self.selected_layers.contains(&hit_id) {
+                            // Grabbing a member of the current multi-selection
+                            // moves every member together.
+                            self.project.selected_layer = Some(hit_id);
+                            let starts: Vec<(u64, f32, f32)> = self
+                                .selected_layers
+                                .iter()
+                                .filter_map(|&id| self.project.find_layer(id).map(|l| (id, l.transform.x, l.transform.y)))
+                                .collect();
+                            self.drag = Some(DragMode::MoveGroup { start_pointer: pointer, starts });
+                        } else {
+                            self.select_only(hit_id);
+                            if let Some(layer) = self.project.find_layer(hit_id) {
+                                self.drag = Some(DragMode::Move {
+                                    start_pointer: pointer,
+                                    start_xy: (layer.transform.x, layer.transform.y),
+                                });
+                            }
                         }
                     }
                 }
@@ -1397,6 +1484,36 @@ impl App {
                                     photo.transform.y = iy;
                                     photo.transform.width = iw;
                                     photo.transform.height = ih;
+                                }
+                            }
+                        }
+                        DragMode::MoveGroup { start_pointer, starts } => {
+                            let start_proj = to_project(*start_pointer);
+                            let cur_proj = to_project(pointer);
+                            let delta = cur_proj - start_proj;
+                            for &(gid, sx, sy) in starts {
+                                let new_x = sx + delta.x;
+                                let new_y = sy + delta.y;
+                                let linked_photo = self.linked_screen_photo(gid);
+                                if let Some(layer) = self.project.find_layer_mut(gid) {
+                                    layer.transform.x = new_x;
+                                    layer.transform.y = new_y;
+                                }
+                                if let Some(photo_id) = linked_photo {
+                                    let kind = self.frame_kind(gid);
+                                    let inset = self
+                                        .project
+                                        .find_layer(gid)
+                                        .map(|l| l.transform.clone())
+                                        .map(|t| templates::inset_screen_rect(&t, kind));
+                                    if let (Some(photo), Some((ix, iy, iw, ih))) =
+                                        (self.project.find_layer_mut(photo_id), inset)
+                                    {
+                                        photo.transform.x = ix;
+                                        photo.transform.y = iy;
+                                        photo.transform.width = iw;
+                                        photo.transform.height = ih;
+                                    }
                                 }
                             }
                         }
@@ -1509,7 +1626,7 @@ impl App {
                             self.editing_buffer = text.content.clone();
                             self.editing_text = Some(hit_id);
                             self.editing_focus_pending = true;
-                            self.project.selected_layer = Some(hit_id);
+                            self.select_only(hit_id);
                         } else {
                             self.pick_image_for_layer(hit_id);
                         }
@@ -1519,7 +1636,14 @@ impl App {
         } else if response.clicked() && !response.dragged() {
             if let Some(pointer) = response.interact_pointer_pos() {
                 let p = to_project(pointer);
-                self.project.selected_layer = self.hit_test_layer(p);
+                let hit = self.hit_test_layer(p);
+                let additive = ui.input(|i| i.modifiers.shift || i.modifiers.command || i.modifiers.ctrl);
+                match hit {
+                    Some(id) if additive => self.toggle_selection(id),
+                    Some(id) => self.select_only(id),
+                    None if !additive => self.clear_selection(),
+                    None => {}
+                }
             }
         }
     }
@@ -1629,7 +1753,7 @@ impl App {
                         img.path = path_str;
                         img.crop = crop;
                     }
-                    self.project.selected_layer = Some(hit_id);
+                    self.select_only(hit_id);
                     self.commit_edit(before);
                 }
             }
@@ -1651,14 +1775,14 @@ impl App {
                             img.path = path_str;
                             img.crop = crop;
                         }
-                        self.project.selected_layer = Some(existing_id);
+                        self.select_only(existing_id);
                     } else {
                         let new_id = self.project.alloc_id();
                         let new_layer =
                             templates::screen_photo_layer(new_id, hit_id, &frame_transform, frame_kind, &path_str);
                         let frame_idx = self.project.layers.iter().position(|l| l.id == hit_id).unwrap_or(0);
                         self.project.layers.insert(frame_idx, new_layer);
-                        self.project.selected_layer = Some(new_id);
+                        self.select_only(new_id);
                     }
                     self.commit_edit(before);
                 }
