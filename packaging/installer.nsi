@@ -4,7 +4,7 @@ Unicode true
 !define APP_NAME "Mockup Studio"
 !define APP_EXE "mockup_studio.exe"
 !define APP_PUBLISHER "Mockup Studio"
-!define APP_VERSION "0.2.0"
+!define APP_VERSION "0.2.1"
 !define UNINST_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\MockupStudio"
 
 Name "${APP_NAME}"
