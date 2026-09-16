@@ -39,10 +39,18 @@ fn main() -> eframe::Result<()> {
         return Ok(());
     }
 
+    // Without an explicit icon, eframe falls back to its own bundled default
+    // ("e" logo) and overwrites the Dock/taskbar icon with it a few frames
+    // after launch — which briefly replaces the correct icon set via the
+    // .app bundle's Info.plist. Providing ours here keeps it consistent.
+    let icon = eframe::icon_data::from_png_bytes(include_bytes!("../assets/app_icon.png"))
+        .expect("bundled app icon should decode");
+
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([1600.0, 1000.0])
-            .with_title("Mockup Studio"),
+            .with_title("Mockup Studio")
+            .with_icon(icon),
         ..Default::default()
     };
 
