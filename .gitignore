@@ -3,3 +3,4 @@
 /packaging/*.exe
 /packaging/AppIcon.iconset
 /packaging/icon_*.png
+.DS_Store

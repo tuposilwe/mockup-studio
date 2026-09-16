@@ -8,8 +8,133 @@ mod assets;
 mod bundled;
 mod history;
 mod model;
+mod network;
 mod render;
 mod templates;
+
+/// Self-test for the LAN collaboration code path: hosts and joins on
+/// loopback within the same process, sends a project referencing a real
+/// bundled image from the "client" side, and checks the "host" side
+/// receives it with the image bytes correctly transplanted to a local path.
+/// Not part of the normal app UI flow — a dev-only regression check.
+fn net_test() -> eframe::Result<()> {
+    use std::time::{Duration, Instant};
+
+    let port = 17878u16;
+    let photos = bundled::BundledPhotos::extract_all();
+    let source_bytes = std::fs::read(&photos.coastline).expect("bundled coastline photo should exist");
+
+    let host = network::host(port).expect("host() should bind");
+    std::thread::sleep(Duration::from_millis(150));
+    let join_rx = network::join(&format!("127.0.0.1:{port}"));
+    let client = join_rx
+        .recv_timeout(Duration::from_secs(6))
+        .expect("join() should resolve within 6s")
+        .expect("join() should connect");
+
+    // Drain the PeerConnected events both sides get so they don't confuse
+    // the assertions below.
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while Instant::now() < deadline {
+        if let Ok(network::NetEvent::PeerConnected) = host.events.try_recv() {
+            break;
+        }
+    }
+
+    let mut project = model::Project::default();
+    let layer_id = project.alloc_id();
+    project.layers.push(model::Layer {
+        id: layer_id,
+        name: "Test Photo".to_string(),
+        visible: true,
+        kind: model::LayerKind::Image(model::ImageLayer {
+            path: photos.coastline.clone(),
+            crop: None,
+            linked_frame_id: None,
+        }),
+        transform: model::Transform {
+            x: 0.0,
+            y: 0.0,
+            width: 100.0,
+            height: 100.0,
+            rotation_deg: 0.0,
+            opacity: 100.0,
+            mirror_h: false,
+            mirror_v: false,
+            corner_radius: 0.0,
+            shadow: model::ShadowStyle::default(),
+        },
+    });
+
+    client.send_project(&project);
+
+    let deadline = Instant::now() + Duration::from_secs(3);
+    let mut received: Option<model::Project> = None;
+    while Instant::now() < deadline && received.is_none() {
+        if let Ok(network::NetEvent::ProjectReceived(p)) = host.events.try_recv() {
+            received = Some(p);
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+
+    let received = received.expect("host should have received the client's project within 3s");
+    let image_layer = received
+        .layers
+        .iter()
+        .find_map(|l| match &l.kind {
+            model::LayerKind::Image(img) => Some(img),
+            _ => None,
+        })
+        .expect("received project should contain the image layer");
+
+    assert_ne!(
+        image_layer.path, photos.coastline,
+        "received path should have been remapped to a local cache path, not left as the sender's own path"
+    );
+    let received_bytes = std::fs::read(&image_layer.path).expect("remapped path should be a real readable file");
+    assert_eq!(received_bytes, source_bytes, "transferred image bytes should match the original exactly");
+
+    println!("net-test PASS: hosted, joined, and synced a project with a remapped image asset");
+    println!("  original path: {}", photos.coastline);
+    println!("  remapped path: {}", image_layer.path);
+
+    // Cursor sharing: the client's pointer position should reach the host
+    // as its own lightweight message, distinct from a full project sync.
+    client.send_cursor(123.5, 456.75, "Test User");
+    let deadline = Instant::now() + Duration::from_secs(3);
+    let mut cursor = None;
+    while Instant::now() < deadline && cursor.is_none() {
+        if let Ok(network::NetEvent::CursorReceived { x, y, name }) = host.events.try_recv() {
+            cursor = Some((x, y, name));
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let (x, y, name) = cursor.expect("host should have received the client's cursor position within 3s");
+    assert_eq!((x, y, name.as_str()), (123.5, 456.75, "Test User"));
+    println!("net-test PASS: cursor position synced ({x}, {y}, {name})");
+
+    // Leaving a hosted session ("drop the NetworkState") must actually
+    // release the port, not just detach the app's UI from a background
+    // listener thread that keeps running forever — that was the exact bug
+    // reported ("if i host session and leave if i join again port is being
+    // used"). Drop both sides, then require a fresh host() on the same
+    // port to succeed immediately.
+    drop(client);
+    drop(host);
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let mut rehosted = None;
+    while Instant::now() < deadline && rehosted.is_none() {
+        if let Ok(net) = network::host(port) {
+            rehosted = Some(net);
+        } else {
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    }
+    rehosted.expect("re-hosting on the same port right after leaving should succeed, not fail with 'address already in use'");
+    println!("net-test PASS: leaving a hosted session frees the port for immediate re-hosting");
+
+    Ok(())
+}
 
 fn main() -> eframe::Result<()> {
     let args: Vec<String> = std::env::args().collect();
@@ -37,6 +162,10 @@ fn main() -> eframe::Result<()> {
             println!("Wrote {path}");
         }
         return Ok(());
+    }
+
+    if args.iter().any(|a| a == "--net-test") {
+        return net_test();
     }
 
     // Without an explicit icon, eframe falls back to its own bundled default
