@@ -1288,8 +1288,6 @@ fn app_promo_showcase(photos: &BundledPhotos) -> Project {
 
     let brand_blue = [8, 102, 255, 255];
     let ink = [20, 20, 22, 255];
-    let mid_gray = [130, 132, 136, 255];
-    let chip_bg = [242, 243, 245, 255];
 
     // Headline.
     let headline_id = p.alloc_id();
@@ -1323,153 +1321,13 @@ fn app_promo_showcase(photos: &BundledPhotos) -> Project {
         corner_radius: 0.0,
         shadow: ShadowStyle::default(),
     };
-    let (sx, sy, sw, _sh) = inset_screen_rect(&phone_t, FrameKind::Phone);
-
-    // Mini brand header inside the screen.
-    let mini_logo_w = 90.0;
-    let mini_logo_h = mini_logo_w * (192.0 / 856.0);
-    let mini_logo_id = p.alloc_id();
-    p.layers.push(base_image(mini_logo_id, sx + 16.0, sy + 18.0, mini_logo_w, mini_logo_h, 0.0, &photos.uzasasa_logo, 100.0));
-    let fav_id = p.alloc_id();
-    p.layers.push(base_shape(fav_id, sx + sw - 16.0 - 28.0, sy + 14.0, 28.0, 28.0, 14.0, chip_bg));
-
-    // Search bar.
-    let search_y = sy + 62.0;
-    let search_h = 48.0;
-    let search_id = p.alloc_id();
-    p.layers.push(base_shape(search_id, sx + 16.0, search_y, sw - 32.0, search_h, 24.0, chip_bg));
-    let search_text_id = p.alloc_id();
-    p.layers.push(base_text(
-        search_text_id,
-        "Tafuta gari, bodaboda, au bajaji",
-        sx + 40.0,
-        search_y,
-        sw - 32.0 - 48.0,
-        search_h,
-        15.0,
-        400,
-        mid_gray,
-        TextAlign::Left,
-    ));
-
-    // Category row.
-    let cat_y = search_y + search_h + 20.0;
-    let circle_d = 64.0;
-    let categories = ["Magari", "Bodaboda", "Bajaji", "Mabasi & Malori"];
-    let cat_count = categories.len() as f32;
-    let cat_gap = (sw - 32.0 - circle_d * cat_count) / (cat_count - 1.0);
-    for (i, label) in categories.iter().enumerate() {
-        let cx = sx + 16.0 + i as f32 * (circle_d + cat_gap);
-        let selected = i == 0;
-        let circle_id = p.alloc_id();
-        p.layers.push(base_shape(
-            circle_id,
-            cx,
-            cat_y,
-            circle_d,
-            circle_d,
-            circle_d / 2.0,
-            if selected { brand_blue } else { chip_bg },
-        ));
-        let label_id = p.alloc_id();
-        p.layers.push(base_text(
-            label_id,
-            label,
-            cx - 15.0,
-            cat_y + circle_d + 6.0,
-            circle_d + 30.0,
-            32.0,
-            12.0,
-            600,
-            if selected { brand_blue } else { mid_gray },
-            TextAlign::Center,
-        ));
-    }
-
-    // Filter chips.
-    let chip_y = cat_y + circle_d + 44.0;
-    let chip_h = 34.0;
-    let chips: [(&str, f32, [u8; 4], [u8; 4]); 3] = [
-        ("Dar es Salaam", 150.0, [225, 234, 255, 255], brand_blue),
-        ("Chapa", 90.0, chip_bg, ink),
-        ("Bei", 70.0, chip_bg, ink),
-    ];
-    let mut chip_x = sx + 16.0;
-    for (label, w, bg, fg) in chips {
-        let bg_id = p.alloc_id();
-        p.layers.push(base_shape(bg_id, chip_x, chip_y, w, chip_h, chip_h / 2.0, bg));
-        let text_id = p.alloc_id();
-        p.layers.push(base_text(text_id, label, chip_x, chip_y, w, chip_h, 13.0, 600, fg, TextAlign::Center));
-        chip_x += w + 10.0;
-    }
-
-    // 2x2 listing grid.
-    let grid_y = chip_y + chip_h + 20.0;
-    let grid_gap = 14.0;
-    let card_w = (sw - 32.0 - grid_gap) / 2.0;
-    let card_img_h = 250.0;
-    let card_h = 340.0;
-    let listings = [
-        (&photos.mono_pier, "Toyota Premio 2016", "TZS 23,500,000"),
-        (&photos.city_night, "Nissan X-Trail 2014", "TZS 18,000,000"),
-        (&photos.dunes, "Honda Fit 2013", "TZS 11,500,000"),
-        (&photos.gold_interior, "TVS King Bajaj 2022", "TZS 6,200,000"),
-    ];
-    for (i, (photo, title, price)) in listings.iter().enumerate() {
-        let col = (i % 2) as f32;
-        let row = (i / 2) as f32;
-        let lx = sx + 16.0 + col * (card_w + grid_gap);
-        let ly = grid_y + row * (card_h + grid_gap);
-
-        let card_bg_id = p.alloc_id();
-        p.layers.push(base_shape(card_bg_id, lx, ly, card_w, card_h, 12.0, [255, 255, 255, 255]));
-        let img_id = p.alloc_id();
-        p.layers.push(base_image(img_id, lx, ly, card_w, card_img_h, 12.0, photo, 100.0));
-
-        let title_id = p.alloc_id();
-        p.layers.push(base_text(
-            title_id,
-            title,
-            lx + 10.0,
-            ly + card_img_h + 6.0,
-            card_w - 20.0,
-            22.0,
-            13.0,
-            700,
-            ink,
-            TextAlign::Left,
-        ));
-        let price_id = p.alloc_id();
-        p.layers.push(base_text(
-            price_id,
-            price,
-            lx + 10.0,
-            ly + card_img_h + 30.0,
-            card_w - 20.0,
-            22.0,
-            13.0,
-            700,
-            brand_blue,
-            TextAlign::Left,
-        ));
-        let loc_id = p.alloc_id();
-        p.layers.push(base_text(
-            loc_id,
-            "Dar es Salaam",
-            lx + 10.0,
-            ly + card_img_h + 54.0,
-            card_w - 20.0,
-            20.0,
-            11.0,
-            400,
-            mid_gray,
-            TextAlign::Left,
-        ));
-    }
+    // Screen is just a single sample photo, not composited UI content.
+    let phone_id = p.alloc_id();
+    let photo_id = p.alloc_id();
+    p.layers.push(screen_photo_layer(photo_id, phone_id, &phone_t, FrameKind::Phone, &photos.coastline));
 
     // The frame goes last so its bezel/notch masks everything outside the
-    // screen hole, exactly like a normal screen-photo layer would.
-    let phone_id = p.alloc_id();
+    // screen hole.
     p.layers.push(base_frame(phone_id, phone_x, phone_y, phone_w, phone_h, FrameColor::SpaceGray, photos));
 
     // CTA button.
