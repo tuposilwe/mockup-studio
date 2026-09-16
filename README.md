@@ -34,7 +34,7 @@ or, once built:
 ./packaging/build_macos.sh
 ```
 
-Produces `packaging/dist/Mockup Studio.app` (ad-hoc signed) and `packaging/dist/MockupStudio-macOS.dmg` (drag-to-Applications installer).
+Produces `packaging/dist/Mockup Studio.app` (ad-hoc signed) and `packaging/dist/MockupStudio-macOS.dmg` (drag-to-Applications installer). The binary inside is a universal build (`lipo`-combined Apple Silicon + Intel), so the one .dmg runs natively on both.
 
 ### Windows (.exe installer)
 

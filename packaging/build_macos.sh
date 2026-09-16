@@ -7,14 +7,27 @@ BIN_NAME="mockup_studio"
 BUNDLE_ID="com.mockupstudio.app"
 VERSION="0.2.0"
 
-echo "==> Building release binary"
-cargo build --release
+echo "==> Building release binary (Apple Silicon)"
+rustup target add aarch64-apple-darwin >/dev/null 2>&1 || true
+cargo build --release --target aarch64-apple-darwin
+
+echo "==> Building release binary (Intel)"
+rustup target add x86_64-apple-darwin >/dev/null 2>&1 || true
+cargo build --release --target x86_64-apple-darwin
+
+echo "==> Combining into a universal binary"
+UNIVERSAL_BIN="target/universal/${BIN_NAME}"
+mkdir -p "target/universal"
+lipo -create -output "$UNIVERSAL_BIN" \
+    "target/aarch64-apple-darwin/release/${BIN_NAME}" \
+    "target/x86_64-apple-darwin/release/${BIN_NAME}"
+lipo -info "$UNIVERSAL_BIN"
 
 APP_DIR="packaging/dist/${APP_NAME}.app"
 rm -rf "$APP_DIR"
 mkdir -p "$APP_DIR/Contents/MacOS" "$APP_DIR/Contents/Resources"
 
-cp "target/release/${BIN_NAME}" "$APP_DIR/Contents/MacOS/${BIN_NAME}"
+cp "$UNIVERSAL_BIN" "$APP_DIR/Contents/MacOS/${BIN_NAME}"
 cp "packaging/AppIcon.icns" "$APP_DIR/Contents/Resources/AppIcon.icns"
 
 cat > "$APP_DIR/Contents/Info.plist" <<PLIST
