@@ -1,3 +1,8 @@
+// Hide the console window on Windows for release builds (a native GUI app
+// shouldn't flash a terminal behind it); debug builds keep it so the
+// --export-test/--export-templates dev flags still print their output.
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 mod app;
 mod assets;
 mod bundled;

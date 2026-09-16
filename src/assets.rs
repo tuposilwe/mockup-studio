@@ -79,9 +79,9 @@ impl AssetCache {
     }
 }
 
-/// Loads a handful of static-weight Arial variants that ship with macOS so text
-/// rendering can approximate the 100-900 weight slider without bundling font
-/// binaries. Falls back gracefully if a given file isn't present.
+/// Static-weight Roboto variants (Apache 2.0, Google) embedded into the
+/// binary so text rendering works identically on macOS, Windows, and Linux
+/// without depending on OS-specific system font paths being present.
 pub struct FontManager {
     pub light: Option<ab_glyph::FontVec>,
     pub regular: Option<ab_glyph::FontVec>,
@@ -89,19 +89,17 @@ pub struct FontManager {
     pub black: Option<ab_glyph::FontVec>,
 }
 
-fn load_font(path: &str) -> Option<ab_glyph::FontVec> {
-    let bytes = std::fs::read(path).ok()?;
-    ab_glyph::FontVec::try_from_vec(bytes).ok()
+fn load_font(bytes: &'static [u8]) -> Option<ab_glyph::FontVec> {
+    ab_glyph::FontVec::try_from_vec(bytes.to_vec()).ok()
 }
 
 impl FontManager {
     pub fn load() -> Self {
-        let base = "/System/Library/Fonts/Supplemental";
         FontManager {
-            light: load_font(&format!("{base}/Arial.ttf")),
-            regular: load_font(&format!("{base}/Arial.ttf")),
-            bold: load_font(&format!("{base}/Arial Bold.ttf")),
-            black: load_font(&format!("{base}/Arial Black.ttf")),
+            light: load_font(include_bytes!("../assets/fonts/Roboto-Light.ttf")),
+            regular: load_font(include_bytes!("../assets/fonts/Roboto-Regular.ttf")),
+            bold: load_font(include_bytes!("../assets/fonts/Roboto-Bold.ttf")),
+            black: load_font(include_bytes!("../assets/fonts/Roboto-Black.ttf")),
         }
     }
 
