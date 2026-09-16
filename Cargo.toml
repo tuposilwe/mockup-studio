@@ -8,6 +8,14 @@ default-run = "mockup_studio"
 name = "mockup_studio"
 path = "src/main.rs"
 
+[package.metadata.bundle]
+name = "Mockup Studio"
+identifier = "com.mockupstudio.app"
+icon = ["packaging/AppIcon.icns"]
+
+[build-dependencies]
+winresource = "0.1"
+
 [dependencies]
 eframe = { version = "0.29", default-features = false, features = ["default_fonts", "glow", "persistence"] }
 egui = "0.29"
