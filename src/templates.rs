@@ -8,6 +8,9 @@ pub struct TemplateDef {
 
 pub fn template_gallery() -> Vec<TemplateDef> {
     vec![
+        TemplateDef { name: "Product Listing", build: product_listing_showcase },
+        TemplateDef { name: "App Promo", build: app_promo_showcase },
+        TemplateDef { name: "App Download", build: app_download_showcase },
         TemplateDef { name: "Blank Canvas", build: blank },
         TemplateDef { name: "Minimal Light", build: minimal_light },
         TemplateDef { name: "Gradient Sunset", build: gradient_sunset },
@@ -148,6 +151,31 @@ fn base_ipad_frame(id: u64, x: f32, y: f32, w: f32, h: f32, photos: &BundledPhot
     }
 }
 
+fn base_hand_frame(id: u64, x: f32, y: f32, w: f32, h: f32, photos: &BundledPhotos) -> Layer {
+    Layer {
+        id,
+        name: "Phone (Hand)".to_string(),
+        visible: true,
+        kind: LayerKind::DeviceFrame(DeviceFrameLayer {
+            style: FrameColor::SpaceGray,
+            custom_image_path: Some(photos.hand_phone_frame.clone()),
+            kind: FrameKind::PhoneHand,
+        }),
+        transform: Transform {
+            x,
+            y,
+            width: w,
+            height: h,
+            rotation_deg: 0.0,
+            opacity: 100.0,
+            mirror_h: false,
+            mirror_v: false,
+            corner_radius: 0.0,
+            shadow: ShadowStyle::default(),
+        },
+    }
+}
+
 fn base_text(
     id: u64,
     content: &str,
@@ -240,6 +268,13 @@ fn screen_margins(kind: FrameKind) -> (f32, f32, f32, f32) {
         // iPad: screen rect 155,155 to 2076,3570 in the bundled 2230x3722
         // PNG, which already had a real transparent screen hole.
         FrameKind::Ipad => (0.0695, 0.0691, 0.0416, 0.0408),
+        // Phone-in-hand: screen hole 2258,84 to 4340,4467 in the bundled
+        // 2600x2382 PNG (cropped and downsampled from a 6000x6000 source,
+        // screen located by flood-filling a white-keyed alpha channel from
+        // a seed point inside the screen — the hole isn't a simple
+        // axis-aligned scan target since the hand's fingers overlap the
+        // frame's right edge).
+        FrameKind::PhoneHand => (0.3763, 0.2767, 0.0153, 0.1872),
     }
 }
 
@@ -270,6 +305,7 @@ pub fn screen_photo_layer(id: u64, frame_id: u64, frame: &Transform, kind: Frame
         FrameKind::Android => w * 0.05,
         FrameKind::AndroidWaterdrop => w * 0.05,
         FrameKind::Ipad => w * 0.04,
+        FrameKind::PhoneHand => w * 0.08,
     };
     Layer {
         id,
@@ -312,6 +348,55 @@ fn accent_circle(id: u64, cx: f32, cy: f32, diameter: f32, color: [u8; 4]) -> La
             mirror_h: false,
             mirror_v: false,
             corner_radius: diameter / 2.0,
+            shadow: ShadowStyle::default(),
+        },
+    }
+}
+
+/// A plain solid rounded-rect shape layer — cards, banners, pills, rings.
+fn base_shape(id: u64, x: f32, y: f32, w: f32, h: f32, radius: f32, color: [u8; 4]) -> Layer {
+    Layer {
+        id,
+        name: "Shape".to_string(),
+        visible: true,
+        kind: LayerKind::Shape(ShapeLayer { fill_color: color }),
+        transform: Transform {
+            x,
+            y,
+            width: w,
+            height: h,
+            rotation_deg: 0.0,
+            opacity: 100.0,
+            mirror_h: false,
+            mirror_v: false,
+            corner_radius: radius,
+            shadow: ShadowStyle::default(),
+        },
+    }
+}
+
+/// A plain image layer stretched to fill (x, y, w, h), aspect-cropped from
+/// its source so it doesn't distort, with rounded corners and opacity.
+fn base_image(id: u64, x: f32, y: f32, w: f32, h: f32, radius: f32, path: &str, opacity: f32) -> Layer {
+    Layer {
+        id,
+        name: "Image".to_string(),
+        visible: true,
+        kind: LayerKind::Image(ImageLayer {
+            path: path.to_string(),
+            crop: aspect_crop(path, w, h),
+            linked_frame_id: None,
+        }),
+        transform: Transform {
+            x,
+            y,
+            width: w,
+            height: h,
+            rotation_deg: 0.0,
+            opacity,
+            mirror_h: false,
+            mirror_v: false,
+            corner_radius: radius,
             shadow: ShadowStyle::default(),
         },
     }
@@ -1029,6 +1114,517 @@ fn ipad_showcase(photos: &BundledPhotos) -> Project {
         [30, 30, 34, 255],
         TextAlign::Center,
     ));
+
+    p
+}
+
+/// A classifieds/marketplace-style listing card: logo, a photo grid (main
+/// shot + thumbnail strip with a "selected" ring on the first), a price
+/// pill + title banner, and a footer URL. Built entirely from the existing
+/// Shape/Image/Text primitives — no new layer kind needed.
+fn product_listing_showcase(photos: &BundledPhotos) -> Project {
+    let canvas_w = 1080.0f32;
+    let canvas_h = 1350.0f32;
+    let mut p = Project {
+        canvas_width: canvas_w as u32,
+        canvas_height: canvas_h as u32,
+        background: Background::Color([238, 240, 243, 255]),
+        layers: Vec::new(),
+        next_id: 1,
+        selected_layer: None,
+    };
+
+    let brand_blue = [8, 102, 255, 255];
+    let ink = [35, 31, 32, 255];
+
+    // Brand mark, top-left.
+    let logo_w = 160.0;
+    let logo_h = logo_w * (192.0 / 856.0);
+    let logo_id = p.alloc_id();
+    p.layers.push(base_image(logo_id, 60.0, 48.0, logo_w, logo_h, 0.0, &photos.uzasasa_logo, 100.0));
+
+    // Card.
+    let card_x = 60.0;
+    let card_y = 118.0;
+    let card_w = canvas_w - card_x * 2.0;
+    let pad = 24.0;
+
+    let photo_x = card_x + pad;
+    let photo_y = card_y + pad;
+    let photo_w = card_w - pad * 2.0;
+    let photo_h = 740.0;
+
+    let gap = 14.0;
+    let thumb_w = (photo_w - gap * 3.0) / 4.0;
+    let thumb_h = 160.0;
+    let thumb_y = photo_y + photo_h + gap;
+
+    let card_h = (thumb_y + thumb_h + pad) - card_y;
+    let card_id = p.alloc_id();
+    p.layers.push(base_shape(card_id, card_x, card_y, card_w, card_h, 28.0, [255, 255, 255, 255]));
+
+    // Main photo, with a translucent brand watermark centered on it.
+    let main_photo_id = p.alloc_id();
+    p.layers.push(base_image(main_photo_id, photo_x, photo_y, photo_w, photo_h, 16.0, &photos.coastline, 100.0));
+
+    let wm_w = 300.0;
+    let wm_h = wm_w * (192.0 / 856.0);
+    let watermark_id = p.alloc_id();
+    p.layers.push(base_image(
+        watermark_id,
+        photo_x + (photo_w - wm_w) / 2.0,
+        photo_y + (photo_h - wm_h) / 2.0,
+        wm_w,
+        wm_h,
+        0.0,
+        &photos.uzasasa_logo,
+        30.0,
+    ));
+
+    // Thumbnail strip; the first one gets a blue "selected" ring behind it.
+    let thumb_photos = [&photos.coastline, &photos.dunes, &photos.city_night, &photos.gold_interior];
+    for (i, path) in thumb_photos.iter().enumerate() {
+        let tx = photo_x + i as f32 * (thumb_w + gap);
+        if i == 0 {
+            let ring_id = p.alloc_id();
+            p.layers.push(base_shape(
+                ring_id,
+                tx - 6.0,
+                thumb_y - 6.0,
+                thumb_w + 12.0,
+                thumb_h + 12.0,
+                14.0,
+                brand_blue,
+            ));
+        }
+        let thumb_id = p.alloc_id();
+        p.layers.push(base_image(thumb_id, tx, thumb_y, thumb_w, thumb_h, 10.0, path, 100.0));
+    }
+
+    // Price + title banner directly below the card.
+    let banner_y = card_y + card_h + 18.0;
+    let banner_h = 110.0;
+    let banner_id = p.alloc_id();
+    p.layers.push(base_shape(banner_id, card_x, banner_y, card_w, banner_h, 14.0, brand_blue));
+
+    let pill_pad = 16.0;
+    let pill_w = 300.0;
+    let pill_h = banner_h - pill_pad * 2.0;
+    let pill_id = p.alloc_id();
+    p.layers.push(base_shape(
+        pill_id,
+        card_x + pill_pad,
+        banner_y + pill_pad,
+        pill_w,
+        pill_h,
+        pill_h / 2.0,
+        [255, 255, 255, 255],
+    ));
+    let price_id = p.alloc_id();
+    p.layers.push(base_text(
+        price_id,
+        "Tsh 8,000,000/-",
+        card_x + pill_pad,
+        banner_y + pill_pad,
+        pill_w,
+        pill_h,
+        34.0,
+        800,
+        brand_blue,
+        TextAlign::Center,
+    ));
+
+    let title_x = card_x + pill_pad + pill_w + 24.0;
+    let title_w = card_x + card_w - 24.0 - title_x;
+    let title_id = p.alloc_id();
+    p.layers.push(base_text(
+        title_id,
+        "SUBARU IMPREZA (2008)",
+        title_x,
+        banner_y,
+        title_w,
+        banner_h,
+        30.0,
+        800,
+        [255, 255, 255, 255],
+        TextAlign::Left,
+    ));
+
+    // Footer.
+    let footer_id = p.alloc_id();
+    p.layers.push(base_text(
+        footer_id,
+        "www.uzasasa.com",
+        0.0,
+        banner_y + banner_h + 26.0,
+        canvas_w,
+        50.0,
+        30.0,
+        500,
+        ink,
+        TextAlign::Center,
+    ));
+
+    p
+}
+
+/// An app-download promo poster: bold headline, a phone mockup with a
+/// recreated app UI (search bar, category chips, a 2x2 listing grid) built
+/// entirely from Shape/Image/Text layers positioned inside the frame's own
+/// screen rect, a CTA pill, and the brand logo. Demonstrates that a device
+/// frame's "screen" doesn't have to be a single photo — it can be any
+/// composition of layers placed within `inset_screen_rect`.
+fn app_promo_showcase(photos: &BundledPhotos) -> Project {
+    let canvas_w = 1200.0f32;
+    let canvas_h = 1600.0f32;
+    let mut p = Project {
+        canvas_width: canvas_w as u32,
+        canvas_height: canvas_h as u32,
+        background: Background::Color([250, 250, 251, 255]),
+        layers: Vec::new(),
+        next_id: 1,
+        selected_layer: None,
+    };
+
+    let brand_blue = [8, 102, 255, 255];
+    let ink = [20, 20, 22, 255];
+    let mid_gray = [130, 132, 136, 255];
+    let chip_bg = [242, 243, 245, 255];
+
+    // Headline.
+    let headline_id = p.alloc_id();
+    p.layers.push(base_text(
+        headline_id,
+        "Tumekurahisishia",
+        40.0,
+        44.0,
+        canvas_w - 80.0,
+        120.0,
+        58.0,
+        800,
+        ink,
+        TextAlign::Center,
+    ));
+
+    // Phone frame + its screen rect.
+    let phone_w = 560.0;
+    let phone_h = phone_w * (3953.0 / 1965.0);
+    let phone_x = (canvas_w - phone_w) / 2.0;
+    let phone_y = 220.0;
+    let phone_t = Transform {
+        x: phone_x,
+        y: phone_y,
+        width: phone_w,
+        height: phone_h,
+        rotation_deg: 0.0,
+        opacity: 100.0,
+        mirror_h: false,
+        mirror_v: false,
+        corner_radius: 0.0,
+        shadow: ShadowStyle::default(),
+    };
+    let (sx, sy, sw, _sh) = inset_screen_rect(&phone_t, FrameKind::Phone);
+
+    // Mini brand header inside the screen.
+    let mini_logo_w = 90.0;
+    let mini_logo_h = mini_logo_w * (192.0 / 856.0);
+    let mini_logo_id = p.alloc_id();
+    p.layers.push(base_image(mini_logo_id, sx + 16.0, sy + 18.0, mini_logo_w, mini_logo_h, 0.0, &photos.uzasasa_logo, 100.0));
+    let fav_id = p.alloc_id();
+    p.layers.push(base_shape(fav_id, sx + sw - 16.0 - 28.0, sy + 14.0, 28.0, 28.0, 14.0, chip_bg));
+
+    // Search bar.
+    let search_y = sy + 62.0;
+    let search_h = 48.0;
+    let search_id = p.alloc_id();
+    p.layers.push(base_shape(search_id, sx + 16.0, search_y, sw - 32.0, search_h, 24.0, chip_bg));
+    let search_text_id = p.alloc_id();
+    p.layers.push(base_text(
+        search_text_id,
+        "Tafuta gari, bodaboda, au bajaji",
+        sx + 40.0,
+        search_y,
+        sw - 32.0 - 48.0,
+        search_h,
+        15.0,
+        400,
+        mid_gray,
+        TextAlign::Left,
+    ));
+
+    // Category row.
+    let cat_y = search_y + search_h + 20.0;
+    let circle_d = 64.0;
+    let categories = ["Magari", "Bodaboda", "Bajaji", "Mabasi & Malori"];
+    let cat_count = categories.len() as f32;
+    let cat_gap = (sw - 32.0 - circle_d * cat_count) / (cat_count - 1.0);
+    for (i, label) in categories.iter().enumerate() {
+        let cx = sx + 16.0 + i as f32 * (circle_d + cat_gap);
+        let selected = i == 0;
+        let circle_id = p.alloc_id();
+        p.layers.push(base_shape(
+            circle_id,
+            cx,
+            cat_y,
+            circle_d,
+            circle_d,
+            circle_d / 2.0,
+            if selected { brand_blue } else { chip_bg },
+        ));
+        let label_id = p.alloc_id();
+        p.layers.push(base_text(
+            label_id,
+            label,
+            cx - 15.0,
+            cat_y + circle_d + 6.0,
+            circle_d + 30.0,
+            32.0,
+            12.0,
+            600,
+            if selected { brand_blue } else { mid_gray },
+            TextAlign::Center,
+        ));
+    }
+
+    // Filter chips.
+    let chip_y = cat_y + circle_d + 44.0;
+    let chip_h = 34.0;
+    let chips: [(&str, f32, [u8; 4], [u8; 4]); 3] = [
+        ("Dar es Salaam", 150.0, [225, 234, 255, 255], brand_blue),
+        ("Chapa", 90.0, chip_bg, ink),
+        ("Bei", 70.0, chip_bg, ink),
+    ];
+    let mut chip_x = sx + 16.0;
+    for (label, w, bg, fg) in chips {
+        let bg_id = p.alloc_id();
+        p.layers.push(base_shape(bg_id, chip_x, chip_y, w, chip_h, chip_h / 2.0, bg));
+        let text_id = p.alloc_id();
+        p.layers.push(base_text(text_id, label, chip_x, chip_y, w, chip_h, 13.0, 600, fg, TextAlign::Center));
+        chip_x += w + 10.0;
+    }
+
+    // 2x2 listing grid.
+    let grid_y = chip_y + chip_h + 20.0;
+    let grid_gap = 14.0;
+    let card_w = (sw - 32.0 - grid_gap) / 2.0;
+    let card_img_h = 250.0;
+    let card_h = 340.0;
+    let listings = [
+        (&photos.mono_pier, "Toyota Premio 2016", "TZS 23,500,000"),
+        (&photos.city_night, "Nissan X-Trail 2014", "TZS 18,000,000"),
+        (&photos.dunes, "Honda Fit 2013", "TZS 11,500,000"),
+        (&photos.gold_interior, "TVS King Bajaj 2022", "TZS 6,200,000"),
+    ];
+    for (i, (photo, title, price)) in listings.iter().enumerate() {
+        let col = (i % 2) as f32;
+        let row = (i / 2) as f32;
+        let lx = sx + 16.0 + col * (card_w + grid_gap);
+        let ly = grid_y + row * (card_h + grid_gap);
+
+        let card_bg_id = p.alloc_id();
+        p.layers.push(base_shape(card_bg_id, lx, ly, card_w, card_h, 12.0, [255, 255, 255, 255]));
+        let img_id = p.alloc_id();
+        p.layers.push(base_image(img_id, lx, ly, card_w, card_img_h, 12.0, photo, 100.0));
+
+        let title_id = p.alloc_id();
+        p.layers.push(base_text(
+            title_id,
+            title,
+            lx + 10.0,
+            ly + card_img_h + 6.0,
+            card_w - 20.0,
+            22.0,
+            13.0,
+            700,
+            ink,
+            TextAlign::Left,
+        ));
+        let price_id = p.alloc_id();
+        p.layers.push(base_text(
+            price_id,
+            price,
+            lx + 10.0,
+            ly + card_img_h + 30.0,
+            card_w - 20.0,
+            22.0,
+            13.0,
+            700,
+            brand_blue,
+            TextAlign::Left,
+        ));
+        let loc_id = p.alloc_id();
+        p.layers.push(base_text(
+            loc_id,
+            "Dar es Salaam",
+            lx + 10.0,
+            ly + card_img_h + 54.0,
+            card_w - 20.0,
+            20.0,
+            11.0,
+            400,
+            mid_gray,
+            TextAlign::Left,
+        ));
+    }
+
+    // The frame goes last so its bezel/notch masks everything outside the
+    // screen hole, exactly like a normal screen-photo layer would.
+    let phone_id = p.alloc_id();
+    p.layers.push(base_frame(phone_id, phone_x, phone_y, phone_w, phone_h, FrameColor::SpaceGray, photos));
+
+    // CTA button.
+    let cta_y = phone_y + phone_h + 40.0;
+    let cta_w = 420.0;
+    let cta_h = 92.0;
+    let cta_x = (canvas_w - cta_w) / 2.0;
+    let cta_bg_id = p.alloc_id();
+    p.layers.push(base_shape(cta_bg_id, cta_x, cta_y, cta_w, cta_h, cta_h / 2.0, brand_blue));
+    let cta_text_id = p.alloc_id();
+    p.layers.push(base_text(
+        cta_text_id,
+        "Pakua sasa",
+        cta_x,
+        cta_y,
+        cta_w,
+        cta_h,
+        34.0,
+        800,
+        [255, 255, 255, 255],
+        TextAlign::Center,
+    ));
+
+    // Footer logo.
+    let logo_w = 220.0;
+    let logo_h = logo_w * (192.0 / 856.0);
+    let logo_id = p.alloc_id();
+    p.layers.push(base_image(
+        logo_id,
+        (canvas_w - logo_w) / 2.0,
+        cta_y + cta_h + 40.0,
+        logo_w,
+        logo_h,
+        0.0,
+        &photos.uzasasa_logo,
+        100.0,
+    ));
+
+    p
+}
+
+/// A full app-store-poster layout: left-aligned headline/subhead, brand logo
+/// and Play/App Store badges bottom-left, and a phone on the right whose
+/// screen carries a much more detailed recreated home-feed UI (status bar,
+/// header with notification bell, search bar, category row, a
+/// "Mapendekezo"/"Tazama yote" section header, a vertical listing feed, and
+/// a bottom tab bar) than `app_promo_showcase`'s simpler grid screen.
+fn app_download_showcase(photos: &BundledPhotos) -> Project {
+    let canvas_w = 1200.0f32;
+    let canvas_h = 1500.0f32;
+    let mut p = Project {
+        canvas_width: canvas_w as u32,
+        canvas_height: canvas_h as u32,
+        background: Background::Color([250, 250, 251, 255]),
+        layers: Vec::new(),
+        next_id: 1,
+        selected_layer: None,
+    };
+
+    let brand_blue = [8, 102, 255, 255];
+    let ink = [20, 20, 22, 255];
+    let mid_gray = [130, 132, 136, 255];
+
+    // Decorative diagonal accent behind everything, bottom-right corner.
+    let accent_id = p.alloc_id();
+    let mut accent = base_shape(accent_id, 700.0, 1310.0, 750.0, 750.0, 0.0, brand_blue);
+    accent.transform.rotation_deg = -25.0;
+    p.layers.push(accent);
+
+    // Headline + subhead, left-aligned.
+    let headline_id = p.alloc_id();
+    p.layers.push(base_text(
+        headline_id,
+        "Tumekurahisishia",
+        80.0,
+        70.0,
+        1040.0,
+        90.0,
+        60.0,
+        800,
+        ink,
+        TextAlign::Left,
+    ));
+    let sub_id = p.alloc_id();
+    p.layers.push(base_text(
+        sub_id,
+        "Nunua au uuzie gari,\npikipiki au bajaji\nkwa haraka na salama.",
+        80.0,
+        175.0,
+        560.0,
+        130.0,
+        24.0,
+        400,
+        mid_gray,
+        TextAlign::Left,
+    ));
+
+    // Phone-in-hand hero shot, centered below the headline, with a sample
+    // photo filling its screen.
+    let phone_w = 1000.0;
+    let phone_h = phone_w * (2382.0 / 2600.0);
+    let phone_x = (canvas_w - phone_w) / 2.0;
+    let phone_y = 340.0;
+    let phone_t = Transform {
+        x: phone_x,
+        y: phone_y,
+        width: phone_w,
+        height: phone_h,
+        rotation_deg: 0.0,
+        opacity: 100.0,
+        mirror_h: false,
+        mirror_v: false,
+        corner_radius: 0.0,
+        shadow: ShadowStyle::default(),
+    };
+    let phone_id = p.alloc_id();
+    let photo_id = p.alloc_id();
+    p.layers.push(screen_photo_layer(photo_id, phone_id, &phone_t, FrameKind::PhoneHand, &photos.coastline));
+    p.layers.push(base_hand_frame(phone_id, phone_x, phone_y, phone_w, phone_h, photos));
+
+    // Brand logo + store badges, below the hero shot.
+    let footer_y = phone_y + phone_h + 30.0;
+    let logo_w = 220.0;
+    let logo_h = logo_w * (192.0 / 856.0);
+    let logo_id = p.alloc_id();
+    p.layers.push(base_image(logo_id, 80.0, footer_y, logo_w, logo_h, 0.0, &photos.uzasasa_logo, 100.0));
+
+    let pakua_id = p.alloc_id();
+    p.layers.push(base_text(
+        pakua_id,
+        "Pakua app ya Uzasasa",
+        80.0,
+        footer_y + 58.0,
+        400.0,
+        30.0,
+        20.0,
+        400,
+        mid_gray,
+        TextAlign::Left,
+    ));
+
+    let badge_h = 58.0;
+    let badge_y = footer_y + 98.0;
+    // Official badge artwork, placed at their own native aspect ratio.
+    let badges: [(&str, f32); 2] = [
+        (&photos.play_store_badge, 757.0 / 222.0),
+        (&photos.app_store_badge, 774.0 / 238.0),
+    ];
+    let mut bx = 80.0;
+    for (path, aspect) in badges {
+        let badge_w = badge_h * aspect;
+        let badge_id = p.alloc_id();
+        p.layers.push(base_image(badge_id, bx, badge_y, badge_w, badge_h, 10.0, path, 100.0));
+        bx += badge_w + 16.0;
+    }
 
     p
 }

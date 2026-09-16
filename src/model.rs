@@ -277,4 +277,8 @@ pub enum FrameKind {
     Android,
     AndroidWaterdrop,
     Ipad,
+    /// A phone photographed/rendered in a hand, screen replaced with a real
+    /// transparent hole — used for a more lifelike "hero shot" than the flat
+    /// procedural phone frame.
+    PhoneHand,
 }
