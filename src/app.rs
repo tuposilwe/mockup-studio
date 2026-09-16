@@ -305,31 +305,72 @@ impl App {
         self.mark_dirty();
     }
 
-    fn do_save(&mut self) {
-        let path = self.project_path.clone().or_else(|| {
-            rfd::FileDialog::new()
-                .set_file_name("project.mockup.json")
-                .add_filter("Mockup Project", &["json"])
-                .save_file()
-        });
-        if let Some(path) = path {
-            match serde_json::to_string_pretty(&self.project) {
-                Ok(json) => {
-                    if let Err(e) = std::fs::write(&path, json) {
-                        self.status = Some(format!("Save failed: {e}"));
-                    } else {
-                        self.status = Some(format!("Saved to {}", path.display()));
-                        self.project_path = Some(path);
-                    }
-                }
-                Err(e) => self.status = Some(format!("Save failed: {e}")),
+    /// `~/Documents/Mockup Studio` (or `%USERPROFILE%\Documents\Mockup Studio`
+    /// on Windows), created on demand — where a first "Save" lands without
+    /// prompting for a location.
+    fn default_save_dir() -> PathBuf {
+        let home = std::env::var("HOME")
+            .or_else(|_| std::env::var("USERPROFILE"))
+            .unwrap_or_else(|_| ".".to_string());
+        let dir = PathBuf::from(home).join("Documents").join("Mockup Studio");
+        let _ = std::fs::create_dir_all(&dir);
+        dir
+    }
+
+    /// The first unused "Untitled[ N].mockup.json" in `dir`, so repeated
+    /// first-saves don't silently clobber each other.
+    fn unique_untitled_path(dir: &std::path::Path) -> PathBuf {
+        let candidate = dir.join("Untitled.mockup.json");
+        if !candidate.exists() {
+            return candidate;
+        }
+        let mut n = 2;
+        loop {
+            let candidate = dir.join(format!("Untitled {n}.mockup.json"));
+            if !candidate.exists() {
+                return candidate;
             }
+            n += 1;
         }
     }
 
+    fn do_save(&mut self) {
+        let path = self
+            .project_path
+            .clone()
+            .unwrap_or_else(|| Self::unique_untitled_path(&Self::default_save_dir()));
+        self.write_project_to(path);
+    }
+
     fn do_save_as(&mut self) {
-        self.project_path = None;
-        self.do_save();
+        let default_dir = self.project_path.as_deref().and_then(|p| p.parent()).map(PathBuf::from);
+        let default_name = self
+            .project_path
+            .as_ref()
+            .and_then(|p| p.file_name())
+            .and_then(|n| n.to_str())
+            .unwrap_or("Untitled.mockup.json");
+        let mut dialog = rfd::FileDialog::new().set_file_name(default_name).add_filter("Mockup Project", &["json"]);
+        if let Some(dir) = default_dir {
+            dialog = dialog.set_directory(dir);
+        }
+        if let Some(path) = dialog.save_file() {
+            self.write_project_to(path);
+        }
+    }
+
+    fn write_project_to(&mut self, path: PathBuf) {
+        match serde_json::to_string_pretty(&self.project) {
+            Ok(json) => {
+                if let Err(e) = std::fs::write(&path, json) {
+                    self.status = Some(format!("Save failed: {e}"));
+                } else {
+                    self.status = Some(format!("Saved to {}", path.display()));
+                    self.project_path = Some(path);
+                }
+            }
+            Err(e) => self.status = Some(format!("Save failed: {e}")),
+        }
     }
 
     fn do_open(&mut self) {
