@@ -301,4 +301,7 @@ pub enum FrameKind {
     /// transparent hole — used for a more lifelike "hero shot" than the flat
     /// procedural phone frame.
     PhoneHand,
+    /// A flat vector-illustration iPhone outline (thin bezel, notch), as an
+    /// alternative style to the photorealistic default phone frame.
+    PhoneVector,
 }

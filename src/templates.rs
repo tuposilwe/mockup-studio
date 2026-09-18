@@ -12,6 +12,7 @@ pub fn template_gallery() -> Vec<TemplateDef> {
         TemplateDef { name: "App Promo", build: app_promo_showcase },
         TemplateDef { name: "App Download", build: app_download_showcase },
         TemplateDef { name: "Passport Photo", build: passport_photo_template },
+        TemplateDef { name: "MacBook + iPhone Duo", build: macbook_iphone_duo },
         TemplateDef { name: "Blank Canvas", build: blank },
         TemplateDef { name: "Minimal Light", build: minimal_light },
         TemplateDef { name: "Gradient Sunset", build: gradient_sunset },
@@ -276,6 +277,11 @@ fn screen_margins(kind: FrameKind) -> (f32, f32, f32, f32) {
         // axis-aligned scan target since the hand's fingers overlap the
         // frame's right edge).
         FrameKind::PhoneHand => (0.3763, 0.2767, 0.0153, 0.1872),
+        // Vector iPhone outline: screen hole 44,44 to 891,1704 in the
+        // bundled 942x1749 PNG (cropped tightly to content; both the
+        // background and screen were already genuinely transparent, so no
+        // color-keying was needed, just a flood-fill to isolate the hole).
+        FrameKind::PhoneVector => (0.0467, 0.0541, 0.0252, 0.0257),
     }
 }
 
@@ -307,6 +313,7 @@ pub fn screen_photo_layer(id: u64, frame_id: u64, frame: &Transform, kind: Frame
         FrameKind::AndroidWaterdrop => w * 0.05,
         FrameKind::Ipad => w * 0.04,
         FrameKind::PhoneHand => w * 0.08,
+        FrameKind::PhoneVector => w * 0.09,
     };
     Layer {
         id,
@@ -1509,6 +1516,71 @@ fn passport_photo_template(photos: &BundledPhotos) -> Project {
     let suit_y = 470.0 - suit_h * (277.0 / 1999.0);
     let suit_id = p.alloc_id();
     p.layers.push(base_image(suit_id, 0.0, suit_y, suit_w, suit_h, 0.0, &photos.suit_overlay, 100.0));
+
+    p
+}
+
+/// A MacBook with a smaller iPhone tucked in front of its bottom-right
+/// corner, both screens showing the same sample image — a common
+/// side-by-side "works on every device" layout. Modeled on a hotpot.ai
+/// template: soft diagonal pastel background, laptop large and left,
+/// phone overlapping its lower-right edge by a modest margin.
+fn macbook_iphone_duo(photos: &BundledPhotos) -> Project {
+    let canvas_w = 1600.0f32;
+    let canvas_h = 1000.0f32;
+    let mut p = Project {
+        canvas_width: canvas_w as u32,
+        canvas_height: canvas_h as u32,
+        background: Background::Gradient {
+            from: [246, 231, 238, 255],
+            to: [223, 231, 250, 255],
+            angle_deg: 135.0,
+        },
+        layers: Vec::new(),
+        next_id: 1,
+        selected_layer: None,
+    };
+
+    // MacBook, large and left-of-center.
+    let mac_w = 1250.0;
+    let mac_h = mac_w * (1509.0 / 2600.0);
+    let mac_t = Transform {
+        x: 60.0,
+        y: 150.0,
+        width: mac_w,
+        height: mac_h,
+        rotation_deg: 0.0,
+        opacity: 100.0,
+        mirror_h: false,
+        mirror_v: false,
+        corner_radius: 0.0,
+        shadow: ShadowStyle::default(),
+    };
+    let mac_frame_id = p.alloc_id();
+    let mac_photo_id = p.alloc_id();
+    p.layers.push(screen_photo_layer(mac_photo_id, mac_frame_id, &mac_t, FrameKind::Laptop, &photos.sunset_gradient));
+    p.layers.push(base_laptop_frame(mac_frame_id, mac_t.x, mac_t.y, mac_t.width, mac_t.height, photos));
+
+    // iPhone, smaller, layered on top so it overlaps the MacBook's
+    // bottom-right corner by a modest margin rather than just sitting beside it.
+    let phone_w = 380.0;
+    let phone_h = phone_w * (3953.0 / 1965.0);
+    let phone_t = Transform {
+        x: mac_t.x + mac_w - 150.0,
+        y: 180.0,
+        width: phone_w,
+        height: phone_h,
+        rotation_deg: 0.0,
+        opacity: 100.0,
+        mirror_h: false,
+        mirror_v: false,
+        corner_radius: 0.0,
+        shadow: ShadowStyle::default(),
+    };
+    let phone_frame_id = p.alloc_id();
+    let phone_photo_id = p.alloc_id();
+    p.layers.push(screen_photo_layer(phone_photo_id, phone_frame_id, &phone_t, FrameKind::Phone, &photos.sunset_gradient));
+    p.layers.push(base_frame(phone_frame_id, phone_t.x, phone_t.y, phone_t.width, phone_t.height, FrameColor::SpaceGray, photos));
 
     p
 }

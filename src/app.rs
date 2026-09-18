@@ -859,6 +859,37 @@ impl App {
         self.commit_edit(before);
     }
 
+    fn do_add_vector_phone_frame(&mut self) {
+        let before = self.begin_edit();
+        let id = self.project.alloc_id();
+        let w = (self.project.canvas_width as f32 * 0.5).min(560.0);
+        let h = w * (1749.0 / 942.0);
+        self.project.layers.push(Layer {
+            id,
+            name: "iPhone (Vector)".to_string(),
+            visible: true,
+            kind: LayerKind::DeviceFrame(DeviceFrameLayer {
+                style: FrameColor::SpaceGray,
+                custom_image_path: Some(self.photos.iphone11_vector_frame.clone()),
+                kind: FrameKind::PhoneVector,
+            }),
+            transform: Transform {
+                x: (self.project.canvas_width as f32 - w) / 2.0,
+                y: (self.project.canvas_height as f32 - h) / 2.0,
+                width: w,
+                height: h,
+                rotation_deg: 0.0,
+                opacity: 100.0,
+                mirror_h: false,
+                mirror_v: false,
+                corner_radius: 0.0,
+                shadow: ShadowStyle::default(),
+            },
+        });
+        self.select_only(id);
+        self.commit_edit(before);
+    }
+
     fn do_add_shape(&mut self) {
         let before = self.begin_edit();
         let id = self.project.alloc_id();
@@ -1123,6 +1154,9 @@ impl App {
             }
             if ui.button("+ iPad").clicked() {
                 self.do_add_ipad_frame();
+            }
+            if ui.button("+ iPhone 11").clicked() {
+                self.do_add_vector_phone_frame();
             }
             if ui.button("+ Shape").clicked() {
                 self.do_add_shape();

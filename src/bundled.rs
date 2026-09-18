@@ -48,6 +48,12 @@ pub struct BundledPhotos {
     /// crop, that the Passport Photo template starts with in place of any
     /// real person's photo — swap it out via the usual double-click.
     pub headshot_placeholder: String,
+    /// A warm radial sunset gradient (cream to coral) used as sample screen
+    /// content for the MacBook + iPhone duo template.
+    pub sunset_gradient: String,
+    /// A flat vector-illustration iPhone frame (thin bezel, notch), with a
+    /// genuinely transparent screen hole and background alike.
+    pub iphone11_vector_frame: String,
 }
 
 fn extract(dir: &std::path::Path, name: &str, bytes: &[u8]) -> String {
@@ -90,6 +96,8 @@ impl BundledPhotos {
             hand_phone_frame: extract(&dir, "hand_phone_frame.png", include_bytes!("../assets/bundled/hand_phone_frame.png")),
             suit_overlay: extract(&dir, "suit_overlay.png", include_bytes!("../assets/bundled/suit_overlay.png")),
             headshot_placeholder: extract(&dir, "headshot_placeholder.png", include_bytes!("../assets/bundled/headshot_placeholder.png")),
+            sunset_gradient: extract(&dir, "sunset_gradient.png", include_bytes!("../assets/bundled/sunset_gradient.png")),
+            iphone11_vector_frame: extract(&dir, "iphone11_vector_frame.png", include_bytes!("../assets/bundled/iphone11_vector_frame.png")),
         }
     }
 }
