@@ -1182,22 +1182,10 @@ fn product_listing_showcase(photos: &BundledPhotos) -> Project {
         30.0,
     ));
 
-    // Thumbnail strip; the first one gets a blue "selected" ring behind it.
+    // Thumbnail strip.
     let thumb_photos = [&photos.coastline, &photos.dunes, &photos.city_night, &photos.gold_interior];
     for (i, path) in thumb_photos.iter().enumerate() {
         let tx = photo_x + i as f32 * (thumb_w + gap);
-        if i == 0 {
-            let ring_id = p.alloc_id();
-            p.layers.push(base_shape(
-                ring_id,
-                tx - 6.0,
-                thumb_y - 6.0,
-                thumb_w + 12.0,
-                thumb_h + 12.0,
-                14.0,
-                brand_blue,
-            ));
-        }
         let thumb_id = p.alloc_id();
         p.layers.push(base_image(thumb_id, tx, thumb_y, thumb_w, thumb_h, 10.0, path, 100.0));
     }
