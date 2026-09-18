@@ -1436,16 +1436,22 @@ impl App {
     }
 
     fn ui_canvas(&mut self, ui: &mut egui::Ui) {
-        let available = ui.available_size();
+        let full_rect = ui.available_rect_before_wrap();
         let aspect = self.project.canvas_width as f32 / self.project.canvas_height as f32;
-        let mut w = available.x;
+        let mut w = full_rect.width();
         let mut h = w / aspect;
-        if h > available.y {
-            h = available.y;
+        if h > full_rect.height() {
+            h = full_rect.height();
             w = h * aspect;
         }
 
-        let (rect, response) = ui.allocate_exact_size(egui::vec2(w, h), egui::Sense::click_and_drag());
+        // Center the canvas in whatever space is available, rather than
+        // pinning it to the top-left — otherwise hiding the Layers/
+        // Properties panels just adds empty space to one side instead of
+        // moving the design toward the middle of the window.
+        let offset = egui::vec2((full_rect.width() - w) / 2.0, (full_rect.height() - h) / 2.0);
+        let rect = egui::Rect::from_min_size(full_rect.min + offset, egui::vec2(w, h));
+        let response = ui.allocate_rect(rect, egui::Sense::click_and_drag());
 
         if let Some(tex) = &self.texture {
             ui.painter().image(
