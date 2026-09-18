@@ -505,39 +505,38 @@ impl App {
         dir
     }
 
-    /// The first unused "Untitled[ N].mockup.json" in `dir`, so repeated
-    /// first-saves don't silently clobber each other.
-    fn unique_untitled_path(dir: &std::path::Path) -> PathBuf {
-        let candidate = dir.join("Untitled.mockup.json");
-        if !candidate.exists() {
-            return candidate;
-        }
-        let mut n = 2;
-        loop {
-            let candidate = dir.join(format!("Untitled {n}.mockup.json"));
+    /// A fresh "adjective-adjective-noun.mockup.json" name that doesn't
+    /// already exist in `dir` — nicer than a bare "Untitled" and still
+    /// collision-checked the same way, so repeated first-saves never
+    /// silently clobber each other.
+    fn random_project_path(dir: &std::path::Path) -> PathBuf {
+        for _ in 0..20 {
+            let name = petname::petname(2, "-").unwrap_or_else(|| "new-design".to_string());
+            let candidate = dir.join(format!("{name}.mockup.json"));
             if !candidate.exists() {
                 return candidate;
             }
-            n += 1;
         }
+        dir.join(format!("design-{}.mockup.json", std::process::id()))
     }
 
     fn do_save(&mut self) {
         let path = self
             .project_path
             .clone()
-            .unwrap_or_else(|| Self::unique_untitled_path(&Self::default_save_dir()));
+            .unwrap_or_else(|| Self::random_project_path(&Self::default_save_dir()));
         self.write_project_to(path);
     }
 
     fn do_save_as(&mut self) {
         let default_dir = self.project_path.as_deref().and_then(|p| p.parent()).map(PathBuf::from);
+        let random_name = format!("{}.mockup.json", petname::petname(2, "-").unwrap_or_else(|| "new-design".to_string()));
         let default_name = self
             .project_path
             .as_ref()
             .and_then(|p| p.file_name())
             .and_then(|n| n.to_str())
-            .unwrap_or("Untitled.mockup.json");
+            .unwrap_or(&random_name);
         let mut dialog = rfd::FileDialog::new().set_file_name(default_name).add_filter("Mockup Project", &["json"]);
         if let Some(dir) = default_dir {
             dialog = dialog.set_directory(dir);
@@ -582,8 +581,9 @@ impl App {
     }
 
     fn do_export(&mut self) {
+        let default_name = format!("{}.png", petname::petname(2, "-").unwrap_or_else(|| "new-design".to_string()));
         if let Some(path) = rfd::FileDialog::new()
-            .set_file_name("export.png")
+            .set_file_name(&default_name)
             .add_filter("PNG Image", &["png"])
             .save_file()
         {
