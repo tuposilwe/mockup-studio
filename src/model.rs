@@ -159,6 +159,7 @@ pub enum LayerKind {
     Text(TextLayer),
     DeviceFrame(DeviceFrameLayer),
     Shape(ShapeLayer),
+    Paint(PaintLayer),
 }
 
 impl LayerKind {
@@ -168,7 +169,26 @@ impl LayerKind {
             LayerKind::Text(_) => "Text",
             LayerKind::DeviceFrame(_) => "Device Frame",
             LayerKind::Shape(_) => "Shape",
+            LayerKind::Paint(_) => "Paint",
         }
+    }
+}
+
+/// A freehand-paintable raster layer: a plain RGBA pixel buffer the brush
+/// tool draws into directly, composited like any other layer. Used for
+/// touch-ups — e.g. picking a color from the design with the eyedropper and
+/// painting over an unwanted bit of a photo.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct PaintLayer {
+    pub width: u32,
+    pub height: u32,
+    /// RGBA8, `width * height * 4` bytes, row-major top-to-bottom.
+    pub pixels: Vec<u8>,
+}
+
+impl PaintLayer {
+    pub fn new_transparent(width: u32, height: u32) -> Self {
+        PaintLayer { width, height, pixels: vec![0u8; (width * height * 4) as usize] }
     }
 }
 

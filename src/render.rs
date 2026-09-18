@@ -1,7 +1,7 @@
 use crate::assets::{AssetCache, FontManager};
 use crate::model::{
-    Background, DeviceFrameLayer, ImageLayer, Layer, LayerKind, Project, ShadowStyle, ShapeLayer,
-    TextAlign, TextLayer,
+    Background, DeviceFrameLayer, ImageLayer, Layer, LayerKind, PaintLayer, Project, ShadowStyle,
+    ShapeLayer, TextAlign, TextLayer,
 };
 use ab_glyph::{Font, ScaleFont};
 use image::{GenericImage, Rgba, RgbaImage};
@@ -86,6 +86,7 @@ fn render_layer(layer: &Layer, assets: &mut AssetCache, fonts: &FontManager) -> 
         LayerKind::Text(text_layer) => draw_text_content(text_layer, w, h, fonts),
         LayerKind::DeviceFrame(frame) => draw_device_frame_content(frame, w, h, assets),
         LayerKind::Shape(shape) => draw_shape_content(shape, w, h, t.corner_radius),
+        LayerKind::Paint(paint) => draw_paint_content(paint, w, h),
     };
 
     let pad = shadow_padding(&t.shadow);
@@ -266,6 +267,20 @@ fn draw_image_content(
     }
 
     Some(resized)
+}
+
+/// Scales the paint layer's own raw pixel buffer to fit the layer's current
+/// on-canvas size (only actually resamples if the layer's box has been
+/// resized away from the buffer's native resolution).
+fn draw_paint_content(layer: &PaintLayer, w: u32, h: u32) -> RgbaImage {
+    let Some(buf) = RgbaImage::from_raw(layer.width, layer.height, layer.pixels.clone()) else {
+        return RgbaImage::from_pixel(w, h, Rgba([0, 0, 0, 0]));
+    };
+    if layer.width == w && layer.height == h {
+        buf
+    } else {
+        image::imageops::resize(&buf, w, h, image::imageops::FilterType::Triangle)
+    }
 }
 
 fn draw_text_content(layer: &TextLayer, w: u32, h: u32, fonts: &FontManager) -> RgbaImage {

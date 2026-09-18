@@ -136,6 +136,75 @@ fn net_test() -> eframe::Result<()> {
     Ok(())
 }
 
+/// Self-test for the Paint layer render path: builds a project with a blue
+/// Shape background and a Paint layer on top, stamps a red brush stroke into
+/// it (via the same `stamp_line` the live brush tool calls), renders the
+/// whole project, and checks the stroke composited correctly over the shape
+/// underneath it while leaving the rest of the shape untouched.
+fn paint_test(out_path: &str) {
+    let mut assets = assets::AssetCache::default();
+    let fonts = assets::FontManager::load();
+
+    let mut project = model::Project::default();
+    project.layers.clear();
+    project.canvas_width = 400;
+    project.canvas_height = 400;
+    project.background = model::Background::Color([255, 255, 255, 255]);
+
+    let shape_id = project.alloc_id();
+    project.layers.push(model::Layer {
+        id: shape_id,
+        name: "Shape".to_string(),
+        visible: true,
+        kind: model::LayerKind::Shape(model::ShapeLayer { fill_color: [40, 80, 220, 255] }),
+        transform: model::Transform {
+            x: 0.0,
+            y: 0.0,
+            width: 400.0,
+            height: 400.0,
+            rotation_deg: 0.0,
+            opacity: 100.0,
+            mirror_h: false,
+            mirror_v: false,
+            corner_radius: 0.0,
+            shadow: model::ShadowStyle::default(),
+        },
+    });
+
+    let paint_id = project.alloc_id();
+    let mut paint_layer = model::PaintLayer::new_transparent(400, 400);
+    app::stamp_line(&mut paint_layer, (100.0, 200.0), (300.0, 200.0), 30.0, [220, 30, 30, 255]);
+    project.layers.push(model::Layer {
+        id: paint_id,
+        name: "Paint".to_string(),
+        visible: true,
+        kind: model::LayerKind::Paint(paint_layer),
+        transform: model::Transform {
+            x: 0.0,
+            y: 0.0,
+            width: 400.0,
+            height: 400.0,
+            rotation_deg: 0.0,
+            opacity: 100.0,
+            mirror_h: false,
+            mirror_v: false,
+            corner_radius: 0.0,
+            shadow: model::ShadowStyle::default(),
+        },
+    });
+
+    let img = render::render_project(&project, &mut assets, &fonts);
+    img.save(out_path).expect("failed to save paint test export");
+
+    let stroke_pixel = img.get_pixel(200, 200);
+    assert_eq!(stroke_pixel.0, [220, 30, 30, 255], "brush stroke should be opaque red at its center");
+    let untouched_pixel = img.get_pixel(20, 20);
+    assert_eq!(untouched_pixel.0, [40, 80, 220, 255], "shape outside the stroke should show through unpainted");
+
+    println!("paint-test PASS: brush stroke composited correctly over the layer beneath it");
+    println!("  wrote {out_path}");
+}
+
 fn main() -> eframe::Result<()> {
     let args: Vec<String> = std::env::args().collect();
     if let Some(pos) = args.iter().position(|a| a == "--export-test") {
@@ -167,6 +236,13 @@ fn main() -> eframe::Result<()> {
     if args.iter().any(|a| a == "--net-test") {
         return net_test();
     }
+
+    if let Some(pos) = args.iter().position(|a| a == "--paint-test") {
+        let out_path = args.get(pos + 1).cloned().unwrap_or_else(|| "paint_test.png".to_string());
+        paint_test(&out_path);
+        return Ok(());
+    }
+
 
     // Without an explicit icon, eframe falls back to its own bundled default
     // ("e" logo) and overwrites the Dock/taskbar icon with it a few frames

@@ -16,6 +16,14 @@ enum Corner {
     BottomRight,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum CropSide {
+    Top,
+    Bottom,
+    Left,
+    Right,
+}
+
 enum DragMode {
     Move { start_pointer: egui::Pos2, start_xy: (f32, f32) },
     /// Moves every layer in the current multi-selection together by the
@@ -24,6 +32,17 @@ enum DragMode {
     MoveGroup { start_pointer: egui::Pos2, starts: Vec<(u64, f32, f32)> },
     ResizeCorner { corner: Corner, start_pointer: egui::Pos2, start_rect: (f32, f32, f32, f32) },
     Rotate { start_pointer_angle: f32, start_rotation: f32 },
+    /// Trims an unwanted strip off one edge of an image layer: the on-canvas
+    /// box shrinks from that side (not a zoom) while the rest of the image
+    /// stays put, by shrinking `crop` and `transform` together in lockstep.
+    CropEdge {
+        side: CropSide,
+        start_pointer: egui::Pos2,
+        start_rect: (f32, f32, f32, f32),
+        start_crop: (f32, f32, f32, f32),
+    },
+    /// Freehand brush strokes into a Paint layer's pixel buffer.
+    Paint { layer_id: u64 },
 }
 
 #[derive(PartialEq, Eq, Clone, Copy)]
@@ -88,6 +107,19 @@ pub struct App {
     /// thread so it can't freeze the UI); polled each frame until it
     /// resolves to either a connected session or an error.
     pending_join: Option<(std::sync::mpsc::Receiver<Result<network::NetworkState, String>>, String)>,
+    /// The image layer currently showing crop-trim edge handles, if any.
+    cropping_layer: Option<u64>,
+    /// The current brush color, settable directly or via the eyedropper.
+    brush_color: [u8; 4],
+    brush_size: f32,
+    /// True while waiting for the next canvas click to sample a color.
+    eyedropper_active: bool,
+    /// The Paint layer currently accepting brush strokes, if any.
+    painting_layer: Option<u64>,
+    /// Last canvas-space point painted during the current stroke, so
+    /// fast mouse movement gets a continuous line instead of gaps between
+    /// per-frame dabs.
+    last_paint_pos: Option<(f32, f32)>,
 }
 
 impl App {
@@ -127,6 +159,12 @@ impl App {
                 .unwrap_or_else(|_| "Collaborator".to_string()),
             remote_cursor: None,
             pending_join: None,
+            cropping_layer: None,
+            brush_color: [20, 20, 22, 255],
+            brush_size: 30.0,
+            eyedropper_active: false,
+            painting_layer: None,
+            last_paint_pos: None,
         }
     }
 
@@ -848,6 +886,36 @@ impl App {
         self.commit_edit(before);
     }
 
+    /// Adds a full-canvas transparent Paint layer on top of everything else,
+    /// ready for brush touch-ups; also immediately arms Paint mode on it
+    /// (matching how "+ Shape" leaves the new layer selected and ready).
+    fn do_add_paint(&mut self) {
+        let before = self.begin_edit();
+        let id = self.project.alloc_id();
+        let (cw, ch) = (self.project.canvas_width, self.project.canvas_height);
+        self.project.layers.push(Layer {
+            id,
+            name: "Paint".to_string(),
+            visible: true,
+            kind: LayerKind::Paint(PaintLayer::new_transparent(cw, ch)),
+            transform: Transform {
+                x: 0.0,
+                y: 0.0,
+                width: cw as f32,
+                height: ch as f32,
+                rotation_deg: 0.0,
+                opacity: 100.0,
+                mirror_h: false,
+                mirror_v: false,
+                corner_radius: 0.0,
+                shadow: ShadowStyle::default(),
+            },
+        });
+        self.select_only(id);
+        self.painting_layer = Some(id);
+        self.commit_edit(before);
+    }
+
     fn do_duplicate(&mut self) {
         let targets = self.selection_or_primary();
         if targets.is_empty() {
@@ -1058,6 +1126,9 @@ impl App {
             }
             if ui.button("+ Shape").clicked() {
                 self.do_add_shape();
+            }
+            if ui.button("+ Paint").clicked() {
+                self.do_add_paint();
             }
         });
         ui.separator();
@@ -1318,6 +1389,19 @@ impl App {
                     img.crop = None;
                     changed = true;
                 }
+                ui.separator();
+                if self.cropping_layer == Some(id) {
+                    if ui.button("Done Cropping").clicked() {
+                        self.cropping_layer = None;
+                    }
+                    ui.label(egui::RichText::new("Drag an edge handle on the canvas inward to trim it off.").weak().small());
+                } else if ui
+                    .button("Crop...")
+                    .on_hover_text("Drag edge handles on the canvas to trim off an unwanted part of the photo")
+                    .clicked()
+                {
+                    self.cropping_layer = Some(id);
+                }
             }
             LayerKind::Text(text) => {
                 changed |= ui.text_edit_multiline(&mut text.content).changed();
@@ -1426,6 +1510,50 @@ impl App {
                         frame.custom_image_path = Some(p.to_string_lossy().to_string());
                         changed = true;
                     }
+                }
+            }
+            LayerKind::Paint(paint) => {
+                ui.horizontal(|ui| {
+                    ui.label("Brush color");
+                    let mut color = egui::Color32::from_rgba_unmultiplied(
+                        self.brush_color[0],
+                        self.brush_color[1],
+                        self.brush_color[2],
+                        self.brush_color[3],
+                    );
+                    if egui::color_picker::color_edit_button_srgba(
+                        ui,
+                        &mut color,
+                        egui::color_picker::Alpha::OnlyBlend,
+                    )
+                    .changed()
+                    {
+                        self.brush_color = color.to_array();
+                    }
+                    let eyedropper_label = if self.eyedropper_active { "Click canvas to pick..." } else { "Eyedropper" };
+                    if ui
+                        .button(eyedropper_label)
+                        .on_hover_text("Click anywhere on the canvas to sample that color into the brush")
+                        .clicked()
+                    {
+                        self.eyedropper_active = !self.eyedropper_active;
+                    }
+                });
+                ui.add(egui::Slider::new(&mut self.brush_size, 2.0..=160.0).text("Brush Size"));
+                ui.separator();
+                if self.painting_layer == Some(id) {
+                    if ui.button("Done Painting").clicked() {
+                        self.painting_layer = None;
+                    }
+                    ui.label(egui::RichText::new("Drag on the canvas to paint with the brush color above.").weak().small());
+                } else if ui.button("Paint...").clicked() {
+                    self.painting_layer = Some(id);
+                }
+                if ui.button("Clear Paint").clicked() {
+                    for b in paint.pixels.iter_mut() {
+                        *b = 0;
+                    }
+                    changed = true;
                 }
             }
         }
@@ -1567,6 +1695,31 @@ impl App {
                 }
             }
         }
+        // Crop-trim edge handles: a small square at the midpoint of each
+        // side of the layer being cropped, dragged inward to trim that edge.
+        let mut crop_handles: [Option<(CropSide, egui::Pos2)>; 4] = [None; 4];
+        if let Some(crop_id) = self.cropping_layer {
+            if let Some(layer) = self.project.find_layer(crop_id) {
+                let t = &layer.transform;
+                let min = rect.min + egui::vec2(t.x * scale, t.y * scale);
+                let max = min + egui::vec2(t.width * scale, t.height * scale);
+                let box_rect = egui::Rect::from_min_max(min, max);
+                ui.painter()
+                    .rect_stroke(box_rect, 0.0, egui::Stroke::new(2.0f32, egui::Color32::from_rgb(255, 150, 30)));
+                let mids = [
+                    (CropSide::Top, egui::pos2((box_rect.min.x + box_rect.max.x) / 2.0, box_rect.min.y)),
+                    (CropSide::Bottom, egui::pos2((box_rect.min.x + box_rect.max.x) / 2.0, box_rect.max.y)),
+                    (CropSide::Left, egui::pos2(box_rect.min.x, (box_rect.min.y + box_rect.max.y) / 2.0)),
+                    (CropSide::Right, egui::pos2(box_rect.max.x, (box_rect.min.y + box_rect.max.y) / 2.0)),
+                ];
+                for (i, (side, pos)) in mids.into_iter().enumerate() {
+                    let handle_rect = egui::Rect::from_center_size(pos, egui::vec2(HANDLE_R * 2.0, HANDLE_R * 2.0));
+                    ui.painter().rect_filled(handle_rect, 2.0, egui::Color32::from_rgb(255, 150, 30));
+                    ui.painter().rect_stroke(handle_rect, 2.0, egui::Stroke::new(2.0f32, egui::Color32::WHITE));
+                    crop_handles[i] = Some((side, pos));
+                }
+            }
+        }
         let handle_hit = |p: egui::Pos2, center: egui::Pos2| (p - center).length() <= HANDLE_R + 4.0;
 
         // Drag start: resize/rotate only if grabbing the selected layer's own
@@ -1575,65 +1728,94 @@ impl App {
         // stale selection (this was the cause of erratic/oversized jumps).
         if response.drag_started() {
             if let Some(pointer) = response.interact_pointer_pos() {
-                if let Some(sel_id) = self.project.selected_layer {
-                    if let Some(rp) = rotate_handle {
-                        if handle_hit(pointer, rp) {
-                            if let Some(layer) = self.project.find_layer(sel_id) {
-                                let center = rect.min
-                                    + egui::vec2(
-                                        (layer.transform.x + layer.transform.width / 2.0) * scale,
-                                        (layer.transform.y + layer.transform.height / 2.0) * scale,
-                                    );
-                                let d = pointer - center;
-                                let angle = d.y.atan2(d.x).to_degrees() + 90.0;
-                                self.drag = Some(DragMode::Rotate {
-                                    start_pointer_angle: angle,
-                                    start_rotation: layer.transform.rotation_deg,
-                                });
-                            }
-                        }
-                    }
-                    if self.drag.is_none() {
-                        for slot in corner_handles.iter().flatten() {
-                            let (corner, pos) = *slot;
-                            if handle_hit(pointer, pos) {
-                                if let Some(layer) = self.project.find_layer(sel_id) {
-                                    let t = &layer.transform;
-                                    self.drag = Some(DragMode::ResizeCorner {
-                                        corner,
+                if let Some(paint_id) = self.painting_layer {
+                    self.drag = Some(DragMode::Paint { layer_id: paint_id });
+                    let p = to_project(pointer);
+                    self.last_paint_pos = Some((p.x, p.y));
+                }
+                if self.drag.is_none() {
+                if let Some(crop_id) = self.cropping_layer {
+                    for slot in crop_handles.iter().flatten() {
+                        let (side, pos) = *slot;
+                        if handle_hit(pointer, pos) {
+                            if let Some(layer) = self.project.find_layer(crop_id) {
+                                let t = &layer.transform;
+                                if let LayerKind::Image(img) = &layer.kind {
+                                    let c = img.crop.unwrap_or_default();
+                                    self.drag = Some(DragMode::CropEdge {
+                                        side,
                                         start_pointer: pointer,
                                         start_rect: (t.x, t.y, t.width, t.height),
+                                        start_crop: (c.x, c.y, c.w, c.h),
                                     });
                                 }
-                                break;
                             }
+                            break;
                         }
                     }
                 }
                 if self.drag.is_none() {
-                    let p = to_project(pointer);
-                    if let Some(hit_id) = self.hit_test_layer(p) {
-                        if self.selected_layers.len() > 1 && self.selected_layers.contains(&hit_id) {
-                            // Grabbing a member of the current multi-selection
-                            // moves every member together.
-                            self.project.selected_layer = Some(hit_id);
-                            let starts: Vec<(u64, f32, f32)> = self
-                                .selected_layers
-                                .iter()
-                                .filter_map(|&id| self.project.find_layer(id).map(|l| (id, l.transform.x, l.transform.y)))
-                                .collect();
-                            self.drag = Some(DragMode::MoveGroup { start_pointer: pointer, starts });
-                        } else {
-                            self.select_only(hit_id);
-                            if let Some(layer) = self.project.find_layer(hit_id) {
-                                self.drag = Some(DragMode::Move {
-                                    start_pointer: pointer,
-                                    start_xy: (layer.transform.x, layer.transform.y),
-                                });
+                    if let Some(sel_id) = self.project.selected_layer {
+                        if let Some(rp) = rotate_handle {
+                            if handle_hit(pointer, rp) {
+                                if let Some(layer) = self.project.find_layer(sel_id) {
+                                    let center = rect.min
+                                        + egui::vec2(
+                                            (layer.transform.x + layer.transform.width / 2.0) * scale,
+                                            (layer.transform.y + layer.transform.height / 2.0) * scale,
+                                        );
+                                    let d = pointer - center;
+                                    let angle = d.y.atan2(d.x).to_degrees() + 90.0;
+                                    self.drag = Some(DragMode::Rotate {
+                                        start_pointer_angle: angle,
+                                        start_rotation: layer.transform.rotation_deg,
+                                    });
+                                }
+                            }
+                        }
+                        if self.drag.is_none() {
+                            for slot in corner_handles.iter().flatten() {
+                                let (corner, pos) = *slot;
+                                if handle_hit(pointer, pos) {
+                                    if let Some(layer) = self.project.find_layer(sel_id) {
+                                        let t = &layer.transform;
+                                        self.drag = Some(DragMode::ResizeCorner {
+                                            corner,
+                                            start_pointer: pointer,
+                                            start_rect: (t.x, t.y, t.width, t.height),
+                                        });
+                                    }
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    if self.drag.is_none() {
+                        let p = to_project(pointer);
+                        if let Some(hit_id) = self.hit_test_layer(p) {
+                            if self.selected_layers.len() > 1 && self.selected_layers.contains(&hit_id) {
+                                // Grabbing a member of the current multi-selection
+                                // moves every member together.
+                                self.project.selected_layer = Some(hit_id);
+                                let starts: Vec<(u64, f32, f32)> = self
+                                    .selected_layers
+                                    .iter()
+                                    .filter_map(|&id| self.project.find_layer(id).map(|l| (id, l.transform.x, l.transform.y)))
+                                    .collect();
+                                self.drag = Some(DragMode::MoveGroup { start_pointer: pointer, starts });
+                            } else {
+                                self.select_only(hit_id);
+                                if let Some(layer) = self.project.find_layer(hit_id) {
+                                    self.drag = Some(DragMode::Move {
+                                        start_pointer: pointer,
+                                        start_xy: (layer.transform.x, layer.transform.y),
+                                    });
+                                }
                             }
                         }
                     }
                 }
+                } // end if self.drag.is_none() (paint mode took priority)
                 self.drag_snapshot_taken = false;
             }
         }
@@ -1848,6 +2030,78 @@ impl App {
                                 }
                             }
                         }
+                        DragMode::CropEdge { side, start_pointer, start_rect, start_crop } => {
+                            if let Some(crop_id) = self.cropping_layer {
+                                let start_proj = to_project(*start_pointer);
+                                let cur_proj = to_project(pointer);
+                                let delta = cur_proj - start_proj;
+                                let (sx, sy, sw, sh) = *start_rect;
+                                let (ccx, ccy, ccw, cch) = *start_crop;
+                                const MIN_SIZE: f32 = 10.0;
+                                const MIN_CROP: f32 = 0.02;
+
+                                let (new_x, new_y, new_w, new_h, new_cx, new_cy, new_cw, new_ch) = match side {
+                                    CropSide::Right => {
+                                        let new_w = (sw - delta.x).max(MIN_SIZE);
+                                        let frac = 1.0 - new_w / sw;
+                                        let new_cw = (ccw * (1.0 - frac)).max(MIN_CROP);
+                                        (sx, sy, new_w, sh, ccx, ccy, new_cw, cch)
+                                    }
+                                    CropSide::Left => {
+                                        let new_w = (sw + delta.x).max(MIN_SIZE);
+                                        let frac = 1.0 - new_w / sw;
+                                        let new_cw = (ccw * (1.0 - frac)).max(MIN_CROP);
+                                        let new_cx = ccx + (ccw - new_cw);
+                                        (sx + (sw - new_w), sy, new_w, sh, new_cx, ccy, new_cw, cch)
+                                    }
+                                    CropSide::Bottom => {
+                                        let new_h = (sh - delta.y).max(MIN_SIZE);
+                                        let frac = 1.0 - new_h / sh;
+                                        let new_ch = (cch * (1.0 - frac)).max(MIN_CROP);
+                                        (sx, sy, sw, new_h, ccx, ccy, ccw, new_ch)
+                                    }
+                                    CropSide::Top => {
+                                        let new_h = (sh + delta.y).max(MIN_SIZE);
+                                        let frac = 1.0 - new_h / sh;
+                                        let new_ch = (cch * (1.0 - frac)).max(MIN_CROP);
+                                        let new_cy = ccy + (cch - new_ch);
+                                        (sx, sy + (sh - new_h), sw, new_h, ccx, new_cy, ccw, new_ch)
+                                    }
+                                };
+
+                                if let Some(layer) = self.project.find_layer_mut(crop_id) {
+                                    layer.transform.x = new_x;
+                                    layer.transform.y = new_y;
+                                    layer.transform.width = new_w;
+                                    layer.transform.height = new_h;
+                                    if let LayerKind::Image(img) = &mut layer.kind {
+                                        img.crop = Some(CropRect { x: new_cx, y: new_cy, w: new_cw, h: new_ch });
+                                    }
+                                }
+                            }
+                        }
+                        DragMode::Paint { layer_id } => {
+                            let cur_proj = to_project(pointer);
+                            let from = self.last_paint_pos.unwrap_or((cur_proj.x, cur_proj.y));
+                            let color = self.brush_color;
+                            let size = self.brush_size;
+                            if let Some(layer) = self.project.find_layer_mut(*layer_id) {
+                                let t = layer.transform.clone();
+                                if let LayerKind::Paint(paint) = &mut layer.kind {
+                                    // Buffer pixels may differ in resolution from the
+                                    // layer's current on-canvas size (e.g. if it was
+                                    // resized), so map project-space through the
+                                    // transform into buffer-pixel space.
+                                    let sx = paint.width as f32 / t.width.max(1.0);
+                                    let sy = paint.height as f32 / t.height.max(1.0);
+                                    let buf_from = ((from.0 - t.x) * sx, (from.1 - t.y) * sy);
+                                    let buf_to = ((cur_proj.x - t.x) * sx, (cur_proj.y - t.y) * sy);
+                                    let radius = (size / 2.0) * ((sx + sy) / 2.0);
+                                    stamp_line(paint, buf_from, buf_to, radius, color);
+                                }
+                            }
+                            self.last_paint_pos = Some((cur_proj.x, cur_proj.y));
+                        }
                     }
                     self.mark_dirty();
                 }
@@ -1857,11 +2111,25 @@ impl App {
         if response.drag_stopped() {
             self.drag = None;
             self.drag_snapshot_taken = false;
+            self.last_paint_pos = None;
             self.mark_dirty(); // re-render at full preview quality now that dragging has stopped
             self.broadcast_project(); // drags update history at drag-start, not via commit_edit
         }
 
-        if response.double_clicked() {
+        if self.eyedropper_active && response.clicked() {
+            if let Some(pointer) = response.interact_pointer_pos() {
+                let p = to_project(pointer);
+                // A full, un-downscaled render so the sampled color matches
+                // exactly what the final export would show at that point,
+                // not the (possibly blurrier) live preview texture.
+                let full = render_project(&self.project, &mut self.assets, &self.fonts);
+                let (px, py) = (p.x.round() as i64, p.y.round() as i64);
+                if px >= 0 && py >= 0 && (px as u32) < full.width() && (py as u32) < full.height() {
+                    self.brush_color = full.get_pixel(px as u32, py as u32).0;
+                }
+                self.eyedropper_active = false;
+            }
+        } else if response.double_clicked() {
             if let Some(pointer) = response.interact_pointer_pos() {
                 let p = to_project(pointer);
                 if let Some(hit_id) = self.hit_test_layer(p) {
@@ -2059,6 +2327,44 @@ impl App {
                 }
             }
             _ => {}
+        }
+    }
+}
+
+/// Stamps filled circles along the segment from `from` to `to` (both in
+/// buffer-pixel space), so a fast mouse movement between two per-frame
+/// samples still paints a continuous stroke instead of leaving gaps.
+pub fn stamp_line(paint: &mut PaintLayer, from: (f32, f32), to: (f32, f32), radius: f32, color: [u8; 4]) {
+    let dist = ((to.0 - from.0).powi(2) + (to.1 - from.1).powi(2)).sqrt();
+    let step = (radius * 0.5).max(1.0);
+    let steps = (dist / step).ceil().max(1.0) as i32;
+    for i in 0..=steps {
+        let t = i as f32 / steps as f32;
+        let x = from.0 + (to.0 - from.0) * t;
+        let y = from.1 + (to.1 - from.1) * t;
+        stamp_circle(paint, x, y, radius, color);
+    }
+}
+
+fn stamp_circle(paint: &mut PaintLayer, cx: f32, cy: f32, radius: f32, color: [u8; 4]) {
+    let radius = radius.max(0.5);
+    let r2 = radius * radius;
+    let (w, h) = (paint.width as i32, paint.height as i32);
+    let min_x = (cx - radius).floor().max(0.0) as i32;
+    let max_x = (cx + radius).ceil().min((w - 1) as f32) as i32;
+    let min_y = (cy - radius).floor().max(0.0) as i32;
+    let max_y = (cy + radius).ceil().min((h - 1) as f32) as i32;
+    for y in min_y..=max_y {
+        for x in min_x..=max_x {
+            let dx = x as f32 + 0.5 - cx;
+            let dy = y as f32 + 0.5 - cy;
+            if dx * dx + dy * dy <= r2 {
+                let idx = ((y * w + x) * 4) as usize;
+                paint.pixels[idx] = color[0];
+                paint.pixels[idx + 1] = color[1];
+                paint.pixels[idx + 2] = color[2];
+                paint.pixels[idx + 3] = color[3];
+            }
         }
     }
 }
