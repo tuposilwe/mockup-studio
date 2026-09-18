@@ -61,8 +61,19 @@ PLIST
 
 chmod +x "$APP_DIR/Contents/MacOS/${BIN_NAME}"
 
-echo "==> Signing (ad-hoc)"
-codesign --force --deep --sign - "$APP_DIR"
+# A "Developer ID Application" cert (not "Apple Distribution" — that's for
+# the App Store) is what notarization requires. Falls back to ad-hoc signing
+# if one isn't installed, so this script still works for local test builds.
+DEVELOPER_ID=$(security find-identity -v -p codesigning 2>/dev/null | grep '"Developer ID Application:' | head -1 | sed -E 's/.*"(.*)"/\1/' || true)
+NOTARY_PROFILE="mockup-studio-notary"
+
+if [ -n "$DEVELOPER_ID" ]; then
+    echo "==> Signing with Developer ID: $DEVELOPER_ID"
+    codesign --force --deep --options runtime --timestamp --sign "$DEVELOPER_ID" "$APP_DIR"
+else
+    echo "==> No Developer ID Application cert found — signing ad-hoc (won't pass notarization)"
+    codesign --force --deep --sign - "$APP_DIR"
+fi
 
 echo "==> Building DMG"
 DMG_STAGING="packaging/dist/dmg_staging"
@@ -74,6 +85,15 @@ ln -s /Applications "$DMG_STAGING/Applications"
 DMG_PATH="packaging/dist/MockupStudio-macOS.dmg"
 rm -f "$DMG_PATH"
 hdiutil create -volname "${APP_NAME}" -srcfolder "$DMG_STAGING" -ov -format UDZO "$DMG_PATH"
+
+if [ -n "$DEVELOPER_ID" ] && xcrun notarytool history --keychain-profile "$NOTARY_PROFILE" >/dev/null 2>&1; then
+    echo "==> Submitting for notarization (this can take a few minutes)"
+    xcrun notarytool submit "$DMG_PATH" --keychain-profile "$NOTARY_PROFILE" --wait
+    echo "==> Stapling notarization ticket"
+    xcrun stapler staple "$DMG_PATH"
+else
+    echo "==> Skipping notarization (no Developer ID cert and/or no '$NOTARY_PROFILE' keychain profile)"
+fi
 
 echo "==> Done"
 echo "App:  $APP_DIR"
