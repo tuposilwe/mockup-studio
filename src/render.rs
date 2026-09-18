@@ -1,7 +1,7 @@
 use crate::assets::{AssetCache, FontManager};
 use crate::model::{
-    Background, DeviceFrameLayer, ImageLayer, Layer, LayerKind, PaintLayer, Project, ShadowStyle,
-    ShapeLayer, TextAlign, TextLayer,
+    Background, CropRect, DeviceFrameLayer, ImageLayer, Layer, LayerKind, PaintLayer, Project,
+    ShadowStyle, ShapeLayer, TextAlign, TextLayer,
 };
 use ab_glyph::{Font, ScaleFont};
 use image::{GenericImage, Rgba, RgbaImage};
@@ -17,6 +17,21 @@ pub fn render_project(project: &Project, assets: &mut AssetCache, fonts: &FontMa
     for layer in &project.layers {
         if !layer.visible {
             continue;
+        }
+        // Perspective-warped images bypass the normal "render a rectangular
+        // content buffer, then blit it" pipeline entirely — a warped quad
+        // isn't axis-aligned, so it's drawn straight onto the canvas instead.
+        if let LayerKind::Image(img) = &layer.kind {
+            if let Some(quad_frac) = img.quad {
+                let t = &layer.transform;
+                let quad: [(f32, f32); 4] = std::array::from_fn(|i| {
+                    (t.x + quad_frac[i][0] * t.width, t.y + quad_frac[i][1] * t.height)
+                });
+                if let Some(src) = assets.get_or_load(&img.path) {
+                    draw_perspective_image(&mut canvas, &src, img.crop, quad, t.opacity);
+                }
+                continue;
+            }
         }
         if let Some(buf) = render_layer(layer, assets, fonts) {
             let (bw, bh) = buf.dimensions();
@@ -242,6 +257,121 @@ fn rounded_rect_coverage(x: f32, y: f32, w: f32, h: f32, radius: f32) -> f32 {
     let inside = qx.max(qy).min(0.0);
     let d = outside + inside - r;
     (0.5 - d).clamp(0.0, 1.0)
+}
+
+/// Solves the classic "unit square (0,0)-(1,0)-(1,1)-(0,1) maps to an
+/// arbitrary quadrilateral" projective transform (Heckbert's formula), as a
+/// 3x3 row-major matrix: `[x,y,w] = M * [u,v,1]`, then `(x/w, y/w)` is the
+/// destination point for source UV `(u,v)`.
+fn quad_homography(dst: [(f32, f32); 4]) -> [[f32; 3]; 3] {
+    let (x0, y0) = dst[0];
+    let (x1, y1) = dst[1];
+    let (x2, y2) = dst[2];
+    let (x3, y3) = dst[3];
+
+    let dx1 = x1 - x2;
+    let dx2 = x3 - x2;
+    let dx3 = x0 - x1 + x2 - x3;
+    let dy1 = y1 - y2;
+    let dy2 = y3 - y2;
+    let dy3 = y0 - y1 + y2 - y3;
+
+    let (g, h) = if dx3.abs() < 1e-6 && dy3.abs() < 1e-6 {
+        (0.0, 0.0)
+    } else {
+        let denom = dx1 * dy2 - dx2 * dy1;
+        ((dx3 * dy2 - dx2 * dy3) / denom, (dx1 * dy3 - dx3 * dy1) / denom)
+    };
+    let a = x1 - x0 + g * x1;
+    let b = x3 - x0 + h * x3;
+    let c = x0;
+    let d = y1 - y0 + g * y1;
+    let e = y3 - y0 + h * y3;
+    let f = y0;
+    [[a, b, c], [d, e, f], [g, h, 1.0]]
+}
+
+fn invert3x3(m: [[f32; 3]; 3]) -> Option<[[f32; 3]; 3]> {
+    let (a, b, c) = (m[0][0], m[0][1], m[0][2]);
+    let (d, e, f) = (m[1][0], m[1][1], m[1][2]);
+    let (g, h, i) = (m[2][0], m[2][1], m[2][2]);
+    let det = a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g);
+    if det.abs() < 1e-9 {
+        return None;
+    }
+    let inv_det = 1.0 / det;
+    Some([
+        [(e * i - f * h) * inv_det, (c * h - b * i) * inv_det, (b * f - c * e) * inv_det],
+        [(f * g - d * i) * inv_det, (a * i - c * g) * inv_det, (c * d - a * f) * inv_det],
+        [(d * h - e * g) * inv_det, (b * g - a * h) * inv_det, (a * e - b * d) * inv_det],
+    ])
+}
+
+fn apply_homography(m: &[[f32; 3]; 3], x: f32, y: f32) -> (f32, f32) {
+    let w = m[2][0] * x + m[2][1] * y + m[2][2];
+    ((m[0][0] * x + m[0][1] * y + m[0][2]) / w, (m[1][0] * x + m[1][1] * y + m[1][2]) / w)
+}
+
+fn sample_bilinear(img: &RgbaImage, x: f32, y: f32) -> [u8; 4] {
+    let (iw, ih) = img.dimensions();
+    let x = x.clamp(0.0, iw as f32 - 1.0);
+    let y = y.clamp(0.0, ih as f32 - 1.0);
+    let x0 = x.floor() as u32;
+    let y0 = y.floor() as u32;
+    let x1 = (x0 + 1).min(iw - 1);
+    let y1 = (y0 + 1).min(ih - 1);
+    let fx = x - x0 as f32;
+    let fy = y - y0 as f32;
+    let p00 = img.get_pixel(x0, y0).0;
+    let p10 = img.get_pixel(x1, y0).0;
+    let p01 = img.get_pixel(x0, y1).0;
+    let p11 = img.get_pixel(x1, y1).0;
+    let mut out = [0u8; 4];
+    for i in 0..4 {
+        let top = p00[i] as f32 * (1.0 - fx) + p10[i] as f32 * fx;
+        let bot = p01[i] as f32 * (1.0 - fx) + p11[i] as f32 * fx;
+        out[i] = (top * (1.0 - fy) + bot * fy).round().clamp(0.0, 255.0) as u8;
+    }
+    out
+}
+
+/// Inverse-warps `src` (optionally cropped to a sub-rect first, same as a
+/// normal image layer's crop) so it exactly fills `quad` on `canvas`,
+/// sampling with bilinear filtering so the result isn't blocky.
+fn draw_perspective_image(
+    canvas: &mut RgbaImage,
+    src: &RgbaImage,
+    crop: Option<CropRect>,
+    quad: [(f32, f32); 4],
+    opacity: f32,
+) {
+    let Some(inv) = invert3x3(quad_homography(quad)) else { return };
+    let (sw, sh) = src.dimensions();
+    let (cx, cy, cw, ch) = match crop {
+        Some(c) => (c.x * sw as f32, c.y * sh as f32, c.w * sw as f32, c.h * sh as f32),
+        None => (0.0, 0.0, sw as f32, sh as f32),
+    };
+
+    let (canvas_w, canvas_h) = canvas.dimensions();
+    let min_x = quad.iter().map(|p| p.0).fold(f32::MAX, f32::min).floor().max(0.0) as u32;
+    let max_x = quad.iter().map(|p| p.0).fold(f32::MIN, f32::max).ceil().min(canvas_w as f32) as u32;
+    let min_y = quad.iter().map(|p| p.1).fold(f32::MAX, f32::min).floor().max(0.0) as u32;
+    let max_y = quad.iter().map(|p| p.1).fold(f32::MIN, f32::max).ceil().min(canvas_h as f32) as u32;
+    let alpha_mul = (opacity / 100.0).clamp(0.0, 1.0);
+
+    for y in min_y..max_y {
+        for x in min_x..max_x {
+            let (u, v) = apply_homography(&inv, x as f32 + 0.5, y as f32 + 0.5);
+            if !(0.0..=1.0).contains(&u) || !(0.0..=1.0).contains(&v) {
+                continue;
+            }
+            let sample = sample_bilinear(src, cx + u * cw, cy + v * ch);
+            let mut src_px = Rgba(sample);
+            src_px[3] = (src_px[3] as f32 * alpha_mul).round() as u8;
+            let dst_px = *canvas.get_pixel(x, y);
+            canvas.put_pixel(x, y, blend_pixel(dst_px, src_px));
+        }
+    }
 }
 
 fn draw_image_content(

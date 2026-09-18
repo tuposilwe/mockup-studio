@@ -323,6 +323,7 @@ pub fn screen_photo_layer(id: u64, frame_id: u64, frame: &Transform, kind: Frame
             path: path.to_string(),
             crop,
             linked_frame_id: Some(frame_id),
+            quad: None,
         }),
         transform: Transform {
             x,
@@ -394,6 +395,7 @@ fn base_image(id: u64, x: f32, y: f32, w: f32, h: f32, radius: f32, path: &str, 
             path: path.to_string(),
             crop: aspect_crop(path, w, h),
             linked_frame_id: None,
+            quad: None,
         }),
         transform: Transform {
             x,

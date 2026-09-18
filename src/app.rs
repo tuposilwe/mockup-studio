@@ -654,7 +654,7 @@ impl App {
                 id,
                 name: "Image".to_string(),
                 visible: true,
-                kind: LayerKind::Image(ImageLayer { path: path_str, crop: None, linked_frame_id: None }),
+                kind: LayerKind::Image(ImageLayer { path: path_str, crop: None, linked_frame_id: None, quad: None }),
                 transform: Transform {
                     x,
                     y,

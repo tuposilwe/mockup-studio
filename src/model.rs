@@ -205,6 +205,15 @@ pub struct ImageLayer {
     /// moved/resized together with that frame. Points at the frame layer's id.
     #[serde(default)]
     pub linked_frame_id: Option<u64>,
+    /// When set, the image is perspective-warped to exactly fill these 4
+    /// corners (top-left, top-right, bottom-right, bottom-left) instead of
+    /// being drawn as a plain axis-aligned rect — each point is a fraction
+    /// (0..1) of this layer's own `transform` box, so moving/resizing the
+    /// layer moves/scales the whole warped quad with it. Used for screens
+    /// shown at an angle (e.g. a phone tilted in 3D in a mockup photo)
+    /// where a flat rectangular photo would look pasted on.
+    #[serde(default)]
+    pub quad: Option<[[f32; 2]; 4]>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Copy)]

@@ -51,6 +51,7 @@ fn net_test() -> eframe::Result<()> {
             path: photos.coastline.clone(),
             crop: None,
             linked_frame_id: None,
+            quad: None,
         }),
         transform: model::Transform {
             x: 0.0,
