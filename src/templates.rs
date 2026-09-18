@@ -11,6 +11,7 @@ pub fn template_gallery() -> Vec<TemplateDef> {
         TemplateDef { name: "Product Listing", build: product_listing_showcase },
         TemplateDef { name: "App Promo", build: app_promo_showcase },
         TemplateDef { name: "App Download", build: app_download_showcase },
+        TemplateDef { name: "Passport Photo", build: passport_photo_template },
         TemplateDef { name: "Blank Canvas", build: blank },
         TemplateDef { name: "Minimal Light", build: minimal_light },
         TemplateDef { name: "Gradient Sunset", build: gradient_sunset },
@@ -1483,6 +1484,43 @@ fn app_download_showcase(photos: &BundledPhotos) -> Project {
         p.layers.push(base_image(badge_id, bx, badge_y, badge_w, badge_h, 10.0, path, 100.0));
         bx += badge_w + 16.0;
     }
+
+    p
+}
+
+/// A formal-headshot composite: a plain backdrop stands in for a real photo
+/// (swap it via the usual double-click), with a transparent suit-and-tie
+/// cutout layered on top so the collar opening lines up with a subject's
+/// neck — instant "wearing a suit" without actually wearing one. The suit
+/// overlay's collar-close point and the placeholder's own proportions were
+/// both measured directly (not eyeballed) so the default position lines up
+/// well against a similarly-framed headshot.
+fn passport_photo_template(photos: &BundledPhotos) -> Project {
+    let canvas_w = 944.0f32;
+    let canvas_h = 1115.0f32;
+    let mut p = Project {
+        canvas_width: canvas_w as u32,
+        canvas_height: canvas_h as u32,
+        background: Background::Color([214, 224, 232, 255]),
+        layers: Vec::new(),
+        next_id: 1,
+        selected_layer: None,
+    };
+
+    // Headshot placeholder — swap this for a real photo via double-click.
+    let photo_id = p.alloc_id();
+    p.layers.push(base_image(photo_id, 0.0, 0.0, canvas_w, canvas_h, 0.0, &photos.headshot_placeholder, 100.0));
+
+    // Suit overlay: measured against the bundled suit_overlay.png (cropped
+    // to its content bbox, 3000x1999) — its collar closes at y=277 within
+    // that crop. Scaled to the canvas width (944/3000), that lands at
+    // y=87.2; positioned so it sits at the neck height measured on a
+    // similarly-framed reference headshot (y=470 on a 944x1115 photo).
+    let suit_w = canvas_w;
+    let suit_h = suit_w * (1999.0 / 3000.0);
+    let suit_y = 470.0 - suit_h * (277.0 / 1999.0);
+    let suit_id = p.alloc_id();
+    p.layers.push(base_image(suit_id, 0.0, suit_y, suit_w, suit_h, 0.0, &photos.suit_overlay, 100.0));
 
     p
 }

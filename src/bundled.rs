@@ -40,6 +40,14 @@ pub struct BundledPhotos {
     /// source alpha channel, not color-keyed), used as a more lifelike
     /// alternative to the flat procedural phone frame.
     pub hand_phone_frame: String,
+    /// A transparent-PNG suit-and-tie cutout (torso + collar, no head),
+    /// meant to sit on top of a headshot photo so the collar opening lines
+    /// up with the subject's neck — used by the Passport Photo template.
+    pub suit_overlay: String,
+    /// Plain neutral backdrop, sized/proportioned like a typical headshot
+    /// crop, that the Passport Photo template starts with in place of any
+    /// real person's photo — swap it out via the usual double-click.
+    pub headshot_placeholder: String,
 }
 
 fn extract(dir: &std::path::Path, name: &str, bytes: &[u8]) -> String {
@@ -80,6 +88,8 @@ impl BundledPhotos {
             play_store_badge: extract(&dir, "play_store_badge.png", include_bytes!("../assets/bundled/play_store_badge.png")),
             app_store_badge: extract(&dir, "app_store_badge.png", include_bytes!("../assets/bundled/app_store_badge.png")),
             hand_phone_frame: extract(&dir, "hand_phone_frame.png", include_bytes!("../assets/bundled/hand_phone_frame.png")),
+            suit_overlay: extract(&dir, "suit_overlay.png", include_bytes!("../assets/bundled/suit_overlay.png")),
+            headshot_placeholder: extract(&dir, "headshot_placeholder.png", include_bytes!("../assets/bundled/headshot_placeholder.png")),
         }
     }
 }
