@@ -5,7 +5,7 @@ cd "$(dirname "$0")/.."
 APP_NAME="Mockup Studio"
 BIN_NAME="mockup_studio"
 BUNDLE_ID="com.mockupstudio.app"
-VERSION="0.5.0"
+VERSION="0.6.0"
 
 echo "==> Building release binary (Apple Silicon)"
 rustup target add aarch64-apple-darwin >/dev/null 2>&1 || true
